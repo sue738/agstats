@@ -1,5 +1,5 @@
 {
-  "name": "agentstats",
+  "name": "agentanalytics",
   "version": "0.0.1",
   "description": "What your coding agents did, from their own transcripts — Claude Code, Codex CLI, Gemini CLI and more, side by side.",
   "bin": {

@@ -818,6 +818,17 @@ console.log('== blast: a path that is gone is unknown, not escaped ==');
   ok('an untracked file that still exists still escapes', r.categories[0].samples[0].detail === kept);
 }
 
+console.log('== leaks: scan and scrub agree on secrets after an escaped newline ==');
+{
+  const pat = 'ghp_' + 'B'.repeat(36), akid = 'AKIA' + 'C'.repeat(16);
+  const f = path.join(tmp, 'leak-escaped.jsonl');
+  writeFile(f, [mk({ type: 'user', message: { content: `first line\n${pat}` } }), mk({ type: 'assistant', message: { content: `key\t${akid}` } })]);
+  const scanned = Leaks.scan([{ agent: 'claude', file: f, project: 'p', scrubbable: true }]).findings;
+  const scrubbed = Leaks.scrubContent(fs.readFileSync(f, 'utf8'), Leaks.RULES).hits;
+  ok('★ a secret right after \\n or \\t in raw JSONL is found by scan', scanned.length === 2);
+  ok('★ scan and scrub report the same secrets', scanned.map((x) => x.rule).sort().join() === scrubbed.map((x) => x.ruleId).sort().join());
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

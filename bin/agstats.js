@@ -29,6 +29,7 @@ const Advise = require('../lib/metrics/advise.js');
 const Overlap = require('../lib/metrics/overlap.js');
 const Waits = require('../lib/metrics/waits.js');
 const R = require('../lib/render.js');
+const M = require('../lib/model.js');
 
 const JA = /^ja/i.test(process.env[ENV_LANG] || process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || '');
 const L = (en, ja) => (JA ? ja : en);
@@ -199,8 +200,8 @@ function cmdAgents(o, found) {
     const human = f.sessions.filter((s) => !s.automated).length;
     const rec = {
       agent: f.agent, installed: f.installed, dir: f.dir, sessions: human, automated: f.automated || 0, subagents: subs, events,
-      first: f.sessions.length ? new Date(first).toISOString().slice(0, 10) : null,
-      last: f.sessions.length ? new Date(last).toISOString().slice(0, 10) : null,
+      first: f.sessions.length ? M.dayKey(first) : null,
+      last: f.sessions.length ? M.dayKey(last) : null,
       error: f.error || null,
     };
     out.push(rec);
@@ -257,7 +258,7 @@ function cmdHours(o, found) {
     };
     if (o.json) {
       const day0 = H.dayRange(new Date(from))[0];
-      return console.log(JSON.stringify({ from, to, day0: new Date(day0).toISOString().slice(0, 10), hours: s.agentHours, agents: s.agents, grid }, null, 2));
+      return console.log(JSON.stringify({ from, to, day0: M.dayKey(day0), hours: s.agentHours, agents: s.agents, grid }, null, 2));
     }
     if (o.svg) { fs.writeFileSync(o.svg, R.cardSvg(d, JA)); console.log(L(`wrote ${o.svg}`, `${o.svg} を書き出しました`)); }
     if (o.card || !o.svg) console.log('\n' + R.card(d, JA) + '\n');
@@ -316,11 +317,11 @@ function cmdHours(o, found) {
     const [ds, de] = H.dayRange(d);
     const s = H.summarize(agents, ds, de);
     if (s.agentHours <= 0) continue;
-    const row = [new Date(ds).toISOString().slice(0, 10), R.fmtH(s.agentHours), R.fmtH(s.wallHours), `×${s.parallelism.toFixed(1)}`,
+    const row = [M.dayKey(ds), R.fmtH(s.agentHours), R.fmtH(s.wallHours), `×${s.parallelism.toFixed(1)}`,
       R.fmtH(s.longestRunHours), R.fmtH(s.mainHours), R.fmtH(s.subagentHours)];
     if (multi) for (const name of names) { const a = s.agents.find((x) => x.name === name); row.push(a ? R.fmtH(a.hours) : '0m'); }
     rows.push(row);
-    daily.push({ date: new Date(ds).toISOString().slice(0, 10), ...s });
+    daily.push({ date: M.dayKey(ds), ...s });
   }
   const tot = H.summarize(agents, from, to);
   if (o.json) return console.log(JSON.stringify({ from, to, scope: 'both', ...tot, daily }, null, 2));
@@ -418,7 +419,7 @@ function cmdBlast(o, found) {
     out.push('');
     out.push(L('  examples:', '  実例:'));
     for (const c of r.categories) for (const s of c.samples) {
-      out.push(`    ${new Date(s.ts).toISOString().slice(0, 10)}  ${s.agent.padEnd(7)} ${String(s.detail).replace(/\s+/g, ' ').slice(0, 88)}`);
+      out.push(`    ${M.dayKey(s.ts)}  ${s.agent.padEnd(7)} ${String(s.detail).replace(/\s+/g, ' ').slice(0, 88)}`);
     }
   }
   if (r.busiestDay) {
@@ -730,11 +731,11 @@ function cmdGuards(o, found) {
   let guards = Guards.readGuards();
   if (o.sub === 'add') {
     if (!o.arg) { console.error(L('guards add <tool> [--since YYYYMMDD] [--note ..] [--signature ..]', 'guards add <ツール名> [--since YYYYMMDD] [--note ..] [--signature ..]')); process.exit(2); }
-    const since = o.since ? new Date(parseDate(o.since)).toISOString() : new Date().toISOString();
+    const since = M.localIso(o.since ? parseDate(o.since) : Date.now());
     guards = guards.filter((g) => !(g.tool === o.arg && (g.signature || null) === (o.signature || null)));
     guards.push({ tool: o.arg, since, ...(o.signature ? { signature: o.signature } : {}), ...(o.note ? { note: o.note } : {}) });
     Guards.writeGuards(guards);
-    return console.log(L(`✅ guard registered: ${o.arg} since ${since.slice(0, 10)}  (${Guards.confPath()})`, `✅ ガードを登録: ${o.arg} ${since.slice(0, 10)} 以降  (${Guards.confPath()})`));
+    return console.log(L(`✅ guard registered: ${o.arg} since ${M.dayKey(Date.parse(since))}  (${Guards.confPath()})`, `✅ ガードを登録: ${o.arg} ${M.dayKey(Date.parse(since))} 以降  (${Guards.confPath()})`));
   }
   if (o.sub === 'rm') {
     const before = guards.length;
@@ -748,7 +749,7 @@ function cmdGuards(o, found) {
   const ICON = { fixed: '✅', improved: '🟢', unchanged: '🟡', worse: '🔴', insufficient: '⏳', 'no-baseline': '⚪' };
   console.log(R.banner(L(`${NAME} guards — did it work?`, `${NAME} guards — 効いたか?`)));
   const rows = results.map((r) => [
-    `${ICON[r.verdict]} ${r.tool}${r.signature ? ` [${r.signature.slice(0, 20)}]` : ''}`, r.since.slice(0, 10),
+    `${ICON[r.verdict]} ${r.tool}${r.signature ? ` [${r.signature.slice(0, 20)}]` : ''}`, M.dayKey(Date.parse(r.since)),
     `${n(r.rates.before.errors)}/${n(r.rates.before.calls)}${r.rates.before.rate != null ? ` (${r.rates.before.rate.toFixed(1)}%)` : ''}`,
     `${n(r.rates.after.errors)}/${n(r.rates.after.calls)}${r.rates.after.rate != null ? ` (${r.rates.after.rate.toFixed(1)}%)` : ''}`,
     r.verdict, r.note,
@@ -805,7 +806,7 @@ function cmdOverlap(o, found) {
   console.log(R.table([L('file', 'ファイル'), L('sessions', 'セッション'), L('collisions', '衝突'), L('closest', '最短間隔'), L('writes', '書込')], rows, { align: ['l', 'r', 'r', 'r', 'r'] }));
   console.log(L('\n  closest collisions:', '\n  最も近かった衝突:'));
   for (const c of cols.slice(0, 5)) for (const x of c.examples.slice(0, 1)) {
-    console.log(`  ${new Date(x.t).toISOString().slice(0, 16).replace('T', ' ')}  ${short(c.path).padEnd(28)} ${x.a.agent} …${x.a.session.slice(-6)} → ${x.b.agent} …${x.b.session.slice(-6)}  ${x.gapMin}m apart`);
+    console.log(`  ${M.minuteKey(x.t)}  ${short(c.path).padEnd(28)} ${x.a.agent} …${x.a.session.slice(-6)} → ${x.b.agent} …${x.b.session.slice(-6)}  ${x.gapMin}m apart`);
   }
   console.log(L(`  ${n(cols.length)} file(s) collided. A collision is the same path written by two sessions (subagents count under their parent) within the window.`, `  衝突したファイル ${n(cols.length)} 件。衝突 = 別セッション(サブエージェントは親に含める)が窓の中で同じパスに書いたこと。`));
 }

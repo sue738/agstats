@@ -703,6 +703,38 @@ console.log('== a locked Cursor database ==');
   }
 }
 
+console.log('== day labels are local, like the buckets (TZ=Asia/Tokyo) ==');
+{
+  // 2026-09-19 20:00 UTC = 2026-09-20 05:00 in Tokyo: every label must say the 20th.
+  const base = path.join(tmp, 'tz', 'claude');
+  const at = (s) => new Date(Date.UTC(2026, 8, 19, 20, 0, s)).toISOString();
+  const line = (type, s, content, extra) => mk({ type, timestamp: at(s), cwd: '/work/p', entrypoint: 'cli', message: { role: type, content }, ...extra });
+  const use = (id, name, input) => [{ type: 'tool_use', id, name, input }];
+  writeFile(path.join(base, '-work-p', 'aaaaaaaa-0000-0000-0000-000000000001.jsonl'), [
+    line('user', 0, 'ship it'),
+    line('assistant', 5, use('t1', 'Bash', { command: 'git push origin main' })),
+    line('assistant', 10, use('t2', 'Write', { file_path: '/work/p/a.txt', content: 'x' })),
+  ]);
+  writeFile(path.join(base, '-work-p', 'aaaaaaaa-0000-0000-0000-000000000002.jsonl'), [
+    line('user', 300, 'again'),
+    line('assistant', 305, use('t3', 'Write', { file_path: '/work/p/a.txt', content: 'y' })),
+  ]);
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const env = { ...process.env, TZ: 'Asia/Tokyo', AGSTATS_GUARDS: path.join(tmp, 'tz', 'guards.json') };
+  const run = (args) => execFileSync('node', [bin, ...args, '--dir', `claude=${base}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`], { encoding: 'utf8', env });
+  const ag = JSON.parse(run(['agents', '--json'])).find((a) => a.agent === 'claude');
+  ok('★ TZ: agents first/last name the local day', ag.first === '2026-09-20' && ag.last === '2026-09-20');
+  ok('★ TZ: hours --json daily[].date is the local day', JSON.parse(run(['hours', '--json', '--all'])).daily.map((d) => d.date).join() === '2026-09-20');
+  ok('TZ: hours daily table row is the local day', /2026-09-20/.test(run(['hours', '--all'])) && !/2026-09-19/.test(run(['hours', '--all'])));
+  ok('★ TZ: blast busiestDay is the local day', JSON.parse(run(['blast', '--json', '--all'])).busiestDay[0] === '2026-09-20');
+  ok('TZ: blast --list example dates are local', /2026-09-20\s+claude/.test(run(['blast', '--all', '--list'])));
+  ok('TZ: overlap example timestamp is local', /2026-09-20 05:0\d/.test(run(['overlap', '--all', '--window', '30'])));
+  const added = run(['guards', 'add', 'Bash', '--since', '20260920']);
+  const g = JSON.parse(fs.readFileSync(env.AGSTATS_GUARDS, 'utf8'))[0];
+  ok('★ TZ: guards add --since 20260920 says and stores the 20th, at local midnight', /since 2026-09-20/.test(added) && g.since.startsWith('2026-09-20') && Date.parse(g.since) === Date.UTC(2026, 8, 19, 15));
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

@@ -44,7 +44,7 @@ Commands:
   hours            agent-hours: daily table (default), --monthly, --by-project, --card
   tools            tool calls and failure rate per tool; --suggest clusters the failures
   blast            what cannot be undone: escaped vs contained actions; --list shows examples
-  leaks            secrets sitting in transcripts (read-only; exit 1 on findings)
+  leaks            secrets sitting in transcripts (read-only; exit 1 on findings, 3 if a source was unreadable)
   leaks scrub      redact detected secrets in place (--dry-run, --yes, --no-backup)
   stats            working habits: prompts, replies, tools per prompt, hours of day, tokens, cache share
   timeline         a calendar of your work (--weeks N), streaks, hour bars
@@ -495,13 +495,18 @@ async function cmdLeaksScrub(o, sources) {
 async function cmdLeaks(o, sources) {
   if (o.sub === 'scrub') return cmdLeaksScrub(o, sources);
   const r = Leaks.scan(sources, { days: o.days });
+  // exit 1 means findings, so a source that could not be read must not share
+  // it: 3 = nothing found, but the scan was incomplete.
+  const code = r.findings.length ? 1 : r.unreadable.length ? 3 : 0;
   if (o.json) {
-    console.log(JSON.stringify({ sources_scanned: r.scanned, findings: r.findings.map((f) => ({ ...f, files: undefined })) }, null, 2));
-    process.exit(r.findings.length ? 1 : 0);
+    console.log(JSON.stringify({ sources_scanned: r.scanned, unreadable: r.unreadable, findings: r.findings.map((f) => ({ ...f, files: undefined })) }, null, 2));
+    process.exit(code);
   }
+  for (const u of r.unreadable) console.log(L(`⚠  could not read ${u.agent} ${u.file}: ${u.error}`, `⚠  読めませんでした ${u.agent} ${u.file}: ${u.error}`));
   if (!r.findings.length) {
-    console.log(L(`✅ clean — no secrets matched in ${n(r.scanned)} source(s)`, `✅ 異常なし — ${n(r.scanned)} 件の転記に秘密は見つかりませんでした`));
-    process.exit(0);
+    if (r.unreadable.length) console.log(L(`no secrets matched in the ${n(r.scanned)} source(s) that could be read — not a clean bill: ${r.unreadable.length} went unread`, `読めた ${n(r.scanned)} 件に秘密はありませんでした — ただし ${r.unreadable.length} 件は未読のため「異常なし」とは言えません`));
+    else console.log(L(`✅ clean — no secrets matched in ${n(r.scanned)} source(s)`, `✅ 異常なし — ${n(r.scanned)} 件の転記に秘密は見つかりませんでした`));
+    process.exit(code);
   }
   console.log(L(`🚨 ${r.findings.length} distinct secret(s) found in your agents' transcripts:\n`, `🚨 転記に ${r.findings.length} 種類の秘密が残っています:\n`));
   for (const f of r.findings) {
@@ -851,4 +856,8 @@ async function main() {
   process.exit(2);
 }
 
-main();
+main().catch((e) => {
+  console.error(e && e.stack ? e.stack : String(e));
+  // leaks reserves exit 1 for "secrets found"; a crash there must not read as findings.
+  process.exit(process.argv.slice(2).includes('leaks') ? 3 : 1);
+});

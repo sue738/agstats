@@ -676,6 +676,33 @@ console.log('== waits (who waited for whom) ==');
   ok('keyOf can group by agent', byAgent.rows[0].key === 'claude');
 }
 
+console.log('== a locked Cursor database ==');
+{
+  let sqlite = null;
+  try { sqlite = require('node:sqlite'); } catch (e) { sqlite = null; }
+  if (!sqlite) console.log('  (node:sqlite unavailable — skipped)');
+  else {
+    const dir = path.join(tmp, 'cursor-locked');
+    fs.mkdirSync(dir, { recursive: true });
+    const db = new sqlite.DatabaseSync(path.join(dir, 'state.vscdb'));
+    db.exec('create table cursorDiskKV (key text primary key, value blob)');
+    db.prepare('insert into cursorDiskKV values (?, ?)').run('composerData:c1', JSON.stringify({ createdAt: T(0) }));
+    db.exec("BEGIN EXCLUSIVE; insert into cursorDiskKV values ('composerData:c2', '{}');"); // held, as Cursor does mid-write
+    const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+    const dirArgs = ['--dir', `claude=${path.join(tmp, 'claude')}`, '--dir', `codex=${path.join(tmp, 'nope')}`, '--dir', `gemini=${path.join(tmp, 'nope')}`, '--dir', `cursor=${dir}`];
+    const run = (args) => { try { return { code: 0, out: execFileSync('node', [bin, ...args, ...dirArgs], { encoding: 'utf8', stdio: 'pipe' }) }; } catch (e) { return { code: e.status, out: e.stdout, err: e.stderr }; } };
+    const ag = run(['agents', '--json']);
+    const rows = ag.code === 0 ? JSON.parse(ag.out) : [];
+    ok('★ locked Cursor DB: agents exits 0 and reports the lock as cursor\'s error', ag.code === 0 && /locked/.test((rows.find((r) => r.agent === 'cursor') || {}).error || ''));
+    ok('★ locked Cursor DB: the other agents are still reported', (rows.find((r) => r.agent === 'claude') || {}).sessions === 2);
+    ok('locked Cursor DB: hours still measures claude', run(['hours', '--json', '--all']).code === 0);
+    const lk = run(['leaks', '--json']);
+    ok('★ locked Cursor DB: leaks exits 3 (incomplete), not 1 (findings), and names the unread source', lk.code === 3 && JSON.parse(lk.out).unreadable.length === 1);
+    db.exec('ROLLBACK');
+    db.close();
+  }
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

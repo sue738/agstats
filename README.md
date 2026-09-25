@@ -33,7 +33,7 @@ every metric unless `--include-automated`.
 | `hours` | agent-hours per day / month / project; `--card`, `--svg` for a share card |
 | `tools` | which tools fail and how often; `--suggest` clusters the causes |
 | `blast` | actions that escaped git and temp dirs — pushes, publishes, outbound calls |
-| `leaks` | secrets sitting in plaintext (exit 1 on findings); `leaks scrub` redacts them |
+| `leaks` | secrets sitting in plaintext (exit 1 on findings, 3 if a source was unreadable); `leaks scrub` redacts them |
 | `stats` | prompts, replies, hours of day, tokens by model |
 | `timeline` | a calendar of the work and streaks |
 | `quota` | share of tokens per project against a budget |

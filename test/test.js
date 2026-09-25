@@ -787,6 +787,23 @@ console.log('== --agent / --dir are validated ==');
   ok('library: readAll refuses an unknown agent name', threw);
 }
 
+console.log('== blast matches the command, not text that mentions it ==');
+{
+  const k = (command) => { const r = Blast.classifyCall({ op: 'shell', input: { command } }, () => true); return r.key || r.kind; };
+  ok('★ gcloud run services list is not a deploy', k('gcloud run services list --project p') === 'contained');
+  ok('★ grep for "npm publish" is not a publish', k('grep -rn "npm publish" docs/') === 'contained');
+  ok('★ grep for crontab is not a system change', k('grep -rn crontab .') === 'contained');
+  ok('★ echoing a curl POST into a file is not a network write', k('echo "curl -X POST https://x" > notes.md') === 'contained');
+  ok('★ rm -rf under /tmp is ephemeral, not destroy', k('rm -rf /tmp/scratch') === 'ephemeral' && k('rm -rf "$TMPDIR/scratch"') === 'ephemeral');
+  ok('rm -rf of /tmp itself, or of anything outside it, still destroys', k('rm -rf /tmp') === 'destroy' && k('rm -rf /tmp/a /Users/me/b') === 'destroy' && k('rm -rf build') === 'destroy');
+  ok('a heredoc body is data: its text is not a command', k("cat > x.yml <<'EOF'\nrun: gh pr merge --squash; it's fine\nEOF\nls") === 'contained');
+  ok('still caught after &&, ;, |, sudo, VAR=, timeout and a full path',
+    k('cd x && git push origin main') === 'push' && k('make; npm publish') === 'publish' && k('ls | xargs rm -rf') === 'destroy'
+    && k('sudo npm install -g x') === 'install' && k('FOO=1 timeout 60 git push') === 'push' && k('/opt/sdk/bin/gcloud beta run services update s') === 'deploy');
+  ok('real infra verbs still count, with any number of subcommand words', k('gcloud run deploy svc --image i') === 'deploy' && k('gcloud iam service-accounts create sa') === 'deploy' && k('kubectl run nginx --image=nginx') === 'deploy');
+  ok('curl -D (dump headers) is not --data; -d and -X POST are', k('curl -s -D - https://x') === 'contained' && k('curl -d a=1 https://x') === 'network' && k('curl -X POST https://x') === 'network');
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

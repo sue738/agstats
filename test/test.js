@@ -936,6 +936,30 @@ console.log('== tools: long names stay distinct ==');
   ok('★ two tools sharing a long prefix print as two different names', rows.length === 2 && rows[0] !== rows[1]);
 }
 
+console.log('== nothing installed / nothing said: say so ==');
+{
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const none = ['--dir', `claude=${nope}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`];
+  const run = (args, dirArgs = none) => { try { return execFileSync('node', [bin, ...args, ...dirArgs], { encoding: 'utf8', stdio: 'pipe' }); } catch (e) { return e.stdout; } };
+  ok('★ advise with no agents says there was nothing to read, not "nothing crossed a threshold"', /nothing to read/.test(run(['advise'])) && !/threshold/.test(run(['advise'])));
+  ok('★ leaks with no agents says there was nothing to scan, not "clean"', /nothing to scan/.test(run(['leaks'])) && !/clean/.test(run(['leaks'])));
+  // a session with replies but no human prompt
+  const base = path.join(tmp, 'noprompt', 'claude');
+  writeFile(path.join(base, '-p', 'ffffffff-0000-0000-0000-000000000001.jsonl'), [
+    mk({ type: 'assistant', timestamp: iso(0), message: { role: 'assistant', content: [] } }),
+    mk({ type: 'assistant', timestamp: iso(5), message: { role: 'assistant', content: [] } }),
+  ]);
+  const st = run(['stats', '--all'], ['--dir', `claude=${base}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`]);
+  ok('★ stats with 0 prompts prints no "peak: 0:00 / Sun"', /prompts 0/.test(st) && !/peak:/.test(st));
+  const Stats = require('../lib/metrics/stats.js');
+  ok('stats: peakHour / peakDow are null with no prompts', Stats.summarize([M.session({ agent: 'x', id: 'y', events: [{ t: T(0), kind: 'assistant' }] })]).peakHour === null);
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  ok('package.json points at the GitHub repository', /github\.com\/sue738\/agstats/.test(pkg.repository.url) && /sue738\/agstats/.test(pkg.homepage) && /sue738\/agstats\/issues/.test(pkg.bugs.url));
+  const help = run(['--help']);
+  ok('★ --help names every writer', ['hours --svg', 'quota --set', 'guards add', 'leaks scrub'].every((w) => help.includes(w)));
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

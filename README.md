@@ -59,8 +59,8 @@ up; wall-clock time is shown beside them.
 
 ## Limits
 
-- The only writes are `hours --svg`, `quota --set` and `guards add` (under
-  `~/.agstats/`), and `leaks scrub`, which asks first and keeps a backup.
+- The only writes are `hours --svg`, `quota --set`/`--clear` and `guards add`/`rm`
+  (under `~/.agstats/`), and `leaks scrub`, which asks first and keeps a backup.
 - History is only as long as each agent keeps it (Claude Code: 30 days by default).
 - `attention` flags are regex heuristics (English and Japanese) — read them as a trend.
 

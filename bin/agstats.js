@@ -78,7 +78,8 @@ Output:
 Tuning:
   --idle-gap N     silence (seconds) counted as "stopped" (default ${H.IDLE_GAP_S})
 
-Reads local files only. Changes nothing except \`leaks scrub\` (which asks first).`;
+Reads local files only, no network. Writes only where asked: \`hours --svg\` (the card),
+\`quota --set/--clear\` and \`guards add/rm\` (under ~/.${NAME}/), and \`leaks scrub\` (asks first, backs up).`;
 
 const COMMANDS = ['agents', 'hours', 'tools', 'blast', 'leaks', 'stats', 'timeline', 'quota', 'diff', 'skills', 'attention', 'guards', 'advise', 'overlap', 'waits'];
 
@@ -565,6 +566,10 @@ async function cmdLeaks(o, sources) {
     console.log(JSON.stringify({ sources_scanned: r.scanned, unreadable: r.unreadable, findings: r.findings.map((f) => ({ ...f, files: undefined })) }, null, 2));
     process.exit(code);
   }
+  if (!sources.length) {
+    console.log(L(`nothing to scan — no agent transcripts were found (${NAME} agents shows where it looked).`, `走査するものがありません — エージェントの転記が見つかりませんでした(${NAME} agents で探した場所を確認できます)。`));
+    process.exit(0);
+  }
   for (const u of r.unreadable) console.log(L(`⚠  could not read ${u.agent} ${u.file}: ${u.error}`, `⚠  読めませんでした ${u.agent} ${u.file}: ${u.error}`));
   if (!r.findings.length) {
     if (r.unreadable.length) console.log(L(`no secrets matched in the ${n(r.scanned)} source(s) that could be read — not a clean bill: ${r.unreadable.length} went unread`, `読めた ${n(r.scanned)} 件に秘密はありませんでした — ただし ${r.unreadable.length} 件は未読のため「異常なし」とは言えません`));
@@ -605,7 +610,8 @@ function cmdStats(o, found) {
   console.log(L(`sessions ${n(s.sessions)}   prompts ${n(s.prompts)}   replies ${n(s.replies)}   tool calls ${n(s.toolCalls)}`, `セッション ${n(s.sessions)}   指示 ${n(s.prompts)}   返答 ${n(s.replies)}   ツール実行 ${n(s.toolCalls)}`));
   console.log(L(`  dialogue counts are main loop + human prompts only; tokens include subagents`, `  対話の数はメインループの人間の指示のみ。トークンはサブエージェント込み`));
   console.log(L(`avg session ${s.avgSessionMin} min   ${s.toolsPerPrompt} tool calls per prompt`, `平均セッション長 ${s.avgSessionMin}分   1指示あたりツール実行 ${s.toolsPerPrompt}回`));
-  console.log(L(`\nhour of day (0-23)\n  ${Stats.sparkline(s.byHour)}\n  peak: ${s.peakHour}:00 / ${DOW[s.peakDow]}`, `\n活動時間帯 (0-23時)\n  ${Stats.sparkline(s.byHour)}\n  ピーク: ${s.peakHour}時台 / ${DOW[s.peakDow]}曜日`));
+  if (s.peakHour == null) console.log(L('\nhour of day: no human prompts in this window', '\n活動時間帯: この期間に人の指示はありません'));
+  else console.log(L(`\nhour of day (0-23)\n  ${Stats.sparkline(s.byHour)}\n  peak: ${s.peakHour}:00 / ${DOW[s.peakDow]}`, `\n活動時間帯 (0-23時)\n  ${Stats.sparkline(s.byHour)}\n  ピーク: ${s.peakHour}時台 / ${DOW[s.peakDow]}曜日`));
   const agents = Object.entries(s.byAgent);
   if (agents.length > 1) {
     console.log(L('\nby agent', '\nエージェント別'));
@@ -844,6 +850,7 @@ function cmdAdvise(o, found) {
     return;
   }
   console.log(R.banner(L(`${NAME} advise — ${label}`, `${NAME} advise — ${label}`)));
+  if (!sessions.length) return console.log(L(`  nothing to read — no agent transcripts were found (${NAME} agents shows where it looked).`, `  読むものがありません — エージェントの転記が見つかりませんでした(${NAME} agents で探した場所を確認できます)。`));
   if (!f.length) return console.log(L('  nothing crossed a threshold. That is the result, not an absence of one.', '  閾値を超えたものはありません。これが結果であって、未計測ではありません。'));
   const SEV = { high: '🔴', medium: '🟠', low: '🟡' };
   for (const x of f) {

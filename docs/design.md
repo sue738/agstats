@@ -31,8 +31,9 @@ Name: `agstats`. npm refused `agentstats` as too similar to `agent-stats`, and
    A session with fewer than two stamps contributes zero time. No "typical
    turn length" is ever assumed. This is inherited from cchours verbatim.
 3. **Read-only, local-only.** No network, no dependency. The only writes are
-   `hours --svg <path>` and `leaks scrub` (asks first, backs up, file sources
-   only — never another program's database). Node ≥ 22.13 (`node:sqlite`
+   `hours --svg <path>`, `quota --set` / `--clear` and `guards add` / `rm`
+   (their own files under `~/.agstats/`), and `leaks scrub` (asks first,
+   backs up, file sources only — never another program's database). Node ≥ 22.13 (`node:sqlite`
    without a flag; it is required lazily, so a machine without it loses only
    the Cursor reader).
 4. **A missing agent renders as "not installed", never as zero.** The

@@ -31,6 +31,14 @@
     "README.md",
     "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sue738/agstats.git"
+  },
+  "homepage": "https://github.com/sue738/agstats#readme",
+  "bugs": {
+    "url": "https://github.com/sue738/agstats/issues"
+  },
   "author": "sue738",
   "main": "index.js"
 }

@@ -1,11 +1,11 @@
-# agentinside — design
+# agstats — design
 
 One CLI that measures what your coding agents did, from the transcripts they
 already wrote to disk. Successor to the `cc*` family (cchours, ccblast,
 cctoolstat, ccleaks …), which read Claude Code only. This one reads every agent
 on the machine and reports them side by side.
 
-Name: `agentinside`. npm refused `agentstats` as too similar to `agent-stats`, and
+Name: `agstats`. npm refused `agentstats` as too similar to `agent-stats`, and
 `agentanalytics` collides with `agent-analytics` the same way. The name lives in exactly one place
 (`lib/brand.js`) so it can change before publishing.
 
@@ -19,7 +19,7 @@ Name: `agentinside`. npm refused `agentstats` as too similar to `agent-stats`, a
 ## Invariants (checked by tests, not by reading)
 
 1. **Parity with cchours.** On the same Claude Code transcripts,
-   `agentinside hours --json` reports the same `agentHours`, `wallHours`,
+   `agstats hours --json` reports the same `agentHours`, `wallHours`,
    `mainHours`, `subagentHours`, `longestRunHours`, `peakParallel` and counts
    as `cchours --json`. Same idle cap (60 s), same stamp rule (one stamp per
    user/assistant line), same interval union. `test/test.js` requires the
@@ -133,11 +133,11 @@ and the model deliberately keeps none of the text.
 | `leaks` | ccleaks (secrets in transcripts; scrub for file sources) | v0 |
 | `stats` | ccstats (prompts, replies, tools per prompt, hour of day, tokens by model, cache share, compactions) | v0 |
 | `timeline` | cctimeline (calendar, streaks, hour bars; stamps when an agent has no usage) | v0 |
-| `quota` | ccquota (share of tokens per project vs budget; budgets in ~/.agentinside/budgets.json) | v0 |
+| `quota` | ccquota (share of tokens per project vs budget; budgets in ~/.agstats/budgets.json) | v0 |
 | `diff` | ccdiff (files by touches, churn from recorded patches, commands, git cross-check) | v0 |
 | `skills` | ccskillstats (tool / typed / auto invocations, entrypoint split, installed-but-silent) | v0 |
 | `attention` | ccattention (utterances per session-day, status / approve / nudge, bursts, self-corrections) | v0 |
-| `guards` | ccflaky relapse (rates before/after a registered guard; verdict refuses <20 calls after) — registry `~/.agentinside/guards.json` | v0 |
+| `guards` | ccflaky relapse (rates before/after a registered guard; verdict refuses <20 calls after) — registry `~/.agstats/guards.json` | v0 |
 | `overlap` | new: same absolute path written by two root sessions (subagents fold into their parent) within a window; default 30 min, with a 24 h hint when empty | v0 |
 | `waits` | new: the gaps `hours` discards, attributed — you → agent (spinner), agent → you (reply left waiting, capped 6 h), call → result over 60 s (permission prompt or slow tool) | v0 |
 | `advise` | new: findings over the metrics above. A finding exists only if it has a printed threshold, a hand-over artifact where one makes sense, and a re-measure command. Applies nothing | v0 |

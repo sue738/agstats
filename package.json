@@ -1,9 +1,9 @@
 {
-  "name": "agentinside",
+  "name": "agstats",
   "version": "0.0.1",
   "description": "What your coding agents did, from their own transcripts — Claude Code, Codex CLI, Gemini CLI and more, side by side.",
   "bin": {
-    "agentinside": "bin/agentinside.js"
+    "agstats": "bin/agstats.js"
   },
   "scripts": {
     "test": "node test/test.js"

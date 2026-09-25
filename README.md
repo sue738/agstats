@@ -1,11 +1,11 @@
-# agentinside
+# agstats
 
 **What your coding agents did, from their own transcripts — every agent on the machine, side by side.**
 
 ```bash
-npx agentinside agents       # which agents were found, and how much history each has
-npx agentinside hours        # agent-hours per day, per agent
-npx agentinside blast        # what cannot be undone
+npx agstats agents       # which agents were found, and how much history each has
+npx agstats hours        # agent-hours per day, per agent
+npx agstats blast        # what cannot be undone
 ```
 
 ```
@@ -22,7 +22,7 @@ npx agentinside blast        # what cannot be undone
 ```
 
 Every coding agent writes a full transcript to disk and every usage tool reads
-only one of them. agentinside reads all of them through one normalised model,
+only one of them. agstats reads all of them through one normalised model,
 so the same metric — hours, tool failures, irreversible actions, how often you
 had to speak — comes out comparable across Claude Code, Codex CLI, Gemini CLI
 and Cursor.
@@ -30,7 +30,7 @@ and Cursor.
 It is the successor to the `cc*` family (cchours, cctoolstat, ccblast,
 ccleaks, ccstats, cctimeline, ccquota, ccdiff, ccskillstats, ccattention,
 ccflaky), which read Claude Code only. On the same Claude Code transcripts
-`agentinside hours` reports the same numbers as `cchours`, to the second; the
+`agstats hours` reports the same numbers as `cchours`, to the second; the
 test suite requires cchours when it is on the machine and holds it there.
 
 ## Agents read
@@ -67,14 +67,14 @@ A missing agent renders as *not installed* — never as zero.
 
 
 ```
-$ agentinside advise
+$ agstats advise
 🔴 guard:mcp__notion__notion-update-page
    mcp__notion__notion-update-page fails 17.5% of the time (253/1448) and 97% of the failures are one input error
    threshold: ≥15% over ≥20 calls, one cause ≥80%
    → Block the call before it is made: a PreToolUse hook that checks the input for "validation_error".
-   re-measure: agentinside guards   · artifact: agentinside advise --show guard:mcp__notion__notion-update-page
+   re-measure: agstats guards   · artifact: agstats advise --show guard:mcp__notion__notion-update-page
 
-$ agentinside guards
+$ agstats guards
 ┌───────────────────┬────────────┬──────────────┬────────────────┬─────────┬──────────────────────────────────────┐
 │ guard             │ since      │       before │          after │ verdict │                                      │
 ├───────────────────┼────────────┼──────────────┼────────────────┼─────────┼──────────────────────────────────────┤
@@ -87,7 +87,7 @@ you apply the artifact → `guards add <tool>` → `guards` says fixed / improve
 / unchanged / worse, or "not yet" while fewer than 20 calls have happened since.
 
 ```
-$ agentinside tools --week --suggest
+$ agstats tools --week --suggest
 ┌──────────────────────────────────────────────┬───────┬──────────────────────┬───────────────┐
 │ tool                                         │ calls │                      │ errors        │
 ├──────────────────────────────────────────────┼───────┼──────────────────────┼───────────────┤
@@ -102,7 +102,7 @@ $ agentinside tools --week --suggest
 ```
 
 ```
-$ agentinside blast
+$ agstats blast
   Your agents took 53,382 actions that changed something.
 
   ██████████████░░░░░░░░  65.5%
@@ -118,7 +118,7 @@ $ agentinside blast
 ```
 
 ```
-$ agentinside attention --days 7
+$ agstats attention --days 7
 ┌────────────┬──────┬─────┬──────────┬────────────┬────────┬─────────┬───────┬───────┬────────┬───────────┐
 │ period     │ sess │ you │ per sess │ new intent │ status │ approve │ nudge │ agent │ bursts │  self-fix │
 ├────────────┼──────┼─────┼──────────┼────────────┼────────┼─────────┼───────┼───────┼────────┼───────────┤
@@ -129,29 +129,29 @@ $ agentinside attention --days 7
 ## Usage
 
 ```bash
-agentinside agents                    # what was found
-agentinside hours                     # daily table, all agents
-agentinside hours --agent codex       # one agent
-agentinside hours --monthly           # per month, normalised to a 30-day rate
-agentinside hours --week --by-project
-agentinside hours --card              # paste-anywhere text card, last 30 days
-agentinside hours --svg card.svg      # the card as an image (30-day × 24-hour heatmap)
-agentinside tools --week --suggest    # failing tools, failures clustered and classified
-agentinside blast --list              # escaped actions with examples (default: last 30 days)
-agentinside leaks --days 30           # secret scan, exit 1 on findings; leaks scrub to redact
-agentinside stats --month
-agentinside timeline --weeks 52
-agentinside quota --set main=60 side=20 && agentinside quota --period week
-agentinside diff --commands --git     # latest session; --session <id prefix> for another
-agentinside skills --unused
-agentinside attention --weekly
-agentinside advise                    # findings over the last 30 days; --show <id> prints the artifact
-agentinside overlap --window 120      # files two sessions wrote within 2 h
-agentinside waits --by-agent          # waiting time per agent, last 14 days
-agentinside guards add Bash --note "rm -rf hook"   # then: agentinside guards
-agentinside <cmd> --json              # every command
-agentinside <cmd> --include-automated # count sessions a program wrote
-agentinside <cmd> --dir claude=/some/copy   # read a copy instead of the live directory
+agstats agents                    # what was found
+agstats hours                     # daily table, all agents
+agstats hours --agent codex       # one agent
+agstats hours --monthly           # per month, normalised to a 30-day rate
+agstats hours --week --by-project
+agstats hours --card              # paste-anywhere text card, last 30 days
+agstats hours --svg card.svg      # the card as an image (30-day × 24-hour heatmap)
+agstats tools --week --suggest    # failing tools, failures clustered and classified
+agstats blast --list              # escaped actions with examples (default: last 30 days)
+agstats leaks --days 30           # secret scan, exit 1 on findings; leaks scrub to redact
+agstats stats --month
+agstats timeline --weeks 52
+agstats quota --set main=60 side=20 && agstats quota --period week
+agstats diff --commands --git     # latest session; --session <id prefix> for another
+agstats skills --unused
+agstats attention --weekly
+agstats advise                    # findings over the last 30 days; --show <id> prints the artifact
+agstats overlap --window 120      # files two sessions wrote within 2 h
+agstats waits --by-agent          # waiting time per agent, last 14 days
+agstats guards add Bash --note "rm -rf hook"   # then: agstats guards
+agstats <cmd> --json              # every command
+agstats <cmd> --include-automated # count sessions a program wrote
+agstats <cmd> --dir claude=/some/copy   # read a copy instead of the live directory
 ```
 
 Period flags on every command: `--today`, `--week`, `--month`, `--days N`,
@@ -202,7 +202,7 @@ invents.
 ## Honest limitations
 
 - Reads local files only; no network. The only writes are `hours --svg`,
-  `quota --set` and `guards add` (their own files under `~/.agentinside/`)
+  `quota --set` and `guards add` (their own files under `~/.agstats/`)
   and `leaks scrub` (asks first, backs up, file sources only — never another
   program's database). `advise` never applies anything.
 - History is only as long as each agent keeps it (Claude Code deletes after
@@ -222,7 +222,7 @@ The readers are the reusable part. `agentkanban` (a live board of every
 session) is built on them:
 
 ```js
-const { readers, model, metrics } = require('agentinside');
+const { readers, model, metrics } = require('agstats');
 const found = readers.readAll({ sinceMs: Date.now() - 86400000 });
 ```
 

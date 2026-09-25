@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * agentinside — what your coding agents did, from their own transcripts.
+ * agstats — what your coding agents did, from their own transcripts.
  *
- *   agentinside agents            which agents were found, where, how much history
- *   agentinside hours             agent-hours per day, every agent side by side
- *   agentinside tools             which tools fail, and how often
- *   agentinside blast             what cannot be undone
- *   agentinside leaks             what secrets sit in plaintext (leaks scrub: redact them)
+ *   agstats agents            which agents were found, where, how much history
+ *   agstats hours             agent-hours per day, every agent side by side
+ *   agstats tools             which tools fail, and how often
+ *   agstats blast             what cannot be undone
+ *   agstats leaks             what secrets sit in plaintext (leaks scrub: redact them)
  */
 'use strict';
 

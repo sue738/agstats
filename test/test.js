@@ -19,7 +19,7 @@ let pass = 0, fail = 0;
 const ok = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fail++; console.log('  ✗', n); } };
 const T = (s) => new Date(2026, 0, 1, 12, 0, s).getTime(); // 12:00:00 + s seconds, local
 const iso = (s) => new Date(T(s)).toISOString();
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agentinside-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agstats-'));
 const mk = (o) => JSON.stringify(o);
 function writeFile(p, lines) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, lines.join('\n') + '\n'); }
 
@@ -150,7 +150,7 @@ console.log('== registry / CLI ==');
   const all = Readers.readAll({ dirs });
   ok('missing agent reported as not installed, never as zero sessions of an installed one',
     all.find((a) => a.agent === 'gemini').installed === false && all.find((a) => a.agent === 'claude').installed === true);
-  const bin = path.join(__dirname, '..', 'bin', 'agentinside.js');
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
   const dirArgs = Object.entries(dirs).flatMap(([k, v]) => ['--dir', `${k}=${v}`]);
   const run = (args, opts) => execFileSync('node', [bin, ...args, ...dirArgs], { encoding: 'utf8', ...opts });
   const agents = JSON.parse(run(['agents', '--json']));
@@ -374,7 +374,7 @@ console.log('== parity with cchours on fixtures ==');
 
 console.log('== CLI guards ==');
 {
-  const bin = path.join(__dirname, '..', 'bin', 'agentinside.js');
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
   const dirArgs = ['--dir', `claude=${path.join(tmp, 'claude')}`, '--dir', `codex=${path.join(tmp, 'nope')}`, '--dir', `gemini=${path.join(tmp, 'nope')}`, '--dir', `cursor=${path.join(tmp, 'nope')}`];
   const code = (args) => { try { execFileSync('node', [bin, ...args, ...dirArgs], { encoding: 'utf8', stdio: 'pipe' }); return 0; } catch (e) { return e.status; } };
   ok('★ malformed --since exits 2 instead of silently widening the window', code(['hours', '--since', '2026-7-1']) === 2);

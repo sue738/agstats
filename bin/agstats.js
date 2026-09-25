@@ -80,6 +80,8 @@ Tuning:
 
 Reads local files only. Changes nothing except \`leaks scrub\` (which asks first).`;
 
+const COMMANDS = ['agents', 'hours', 'tools', 'blast', 'leaks', 'stats', 'timeline', 'quota', 'diff', 'skills', 'attention', 'guards', 'advise', 'overlap', 'waits'];
+
 function parseArgs(argv) {
   const o = { dirs: {} };
   const rest = [];
@@ -95,7 +97,8 @@ function parseArgs(argv) {
     else if (a === '--since') o.since = argv[++i];
     else if (a === '--until') o.until = argv[++i];
     else if (a === '--card') o.card = true;
-    else if (a === '--svg') { o.svg = (argv[i + 1] && !argv[i + 1].startsWith('-')) ? argv[++i] : `${NAME}.svg`; }
+    // `agstats --svg hours` means the default file, not a file named "hours"
+    else if (a === '--svg') { const v = argv[i + 1]; o.svg = (v && !v.startsWith('-') && !COMMANDS.includes(v)) ? argv[++i] : `${NAME}.svg`; }
     else if (a === '--json') o.json = true;
     else if (a === '--caps') o.caps = true;
     else if (a === '--by-project') o.byProject = true;
@@ -244,6 +247,17 @@ function cmdAgents(o, found) {
 
 // ---------------------------------------------------------------- hours
 
+/** Write the share card, or say plainly why not: a bad path is the user's to fix, not a stack trace. */
+function writeSvg(file, svg) {
+  const path = require('path');
+  let st = null;
+  try { st = fs.statSync(file); } catch (e) { /* new file */ }
+  if (st && st.isDirectory()) usageError(L(`--svg: ${file} is a directory — give a file path`, `--svg: ${file} はディレクトリです — ファイルのパスを指定してください`));
+  const dir = path.dirname(path.resolve(file));
+  if (!fs.existsSync(dir)) usageError(L(`--svg: directory ${dir} does not exist`, `--svg: ディレクトリ ${dir} がありません`));
+  try { fs.writeFileSync(file, svg); } catch (e) { console.error(L(`--svg: could not write ${file}: ${e.message}`, `--svg: ${file} に書けませんでした: ${e.message}`)); process.exit(1); }
+}
+
 function cmdHours(o, found) {
   const sessions = allSessions(found);
   const agents = H.fromSessions(sessions, o.idleGapS || H.IDLE_GAP_S);
@@ -274,11 +288,12 @@ function cmdHours(o, found) {
       subShare: s.agentHours ? s.subagentHours / s.agentHours : 0,
       nightShare: night.share, parallelism: s.parallelism, subCount: s.subCount, wallHours: s.wallHours, grid,
     };
+    // --svg with --json writes the file too; the "wrote" line goes to stderr so stdout stays JSON.
+    if (o.svg) { writeSvg(o.svg, R.cardSvg(d, JA)); (o.json ? console.error : console.log)(L(`wrote ${o.svg}`, `${o.svg} を書き出しました`)); }
     if (o.json) {
       const day0 = H.dayRange(new Date(from))[0];
-      return console.log(JSON.stringify({ from, to, day0: M.dayKey(day0), hours: s.agentHours, agents: s.agents, grid }, null, 2));
+      return console.log(JSON.stringify({ from, to, day0: M.dayKey(day0), hours: s.agentHours, agents: s.agents, grid, ...(o.svg ? { svg: o.svg } : {}) }, null, 2));
     }
-    if (o.svg) { fs.writeFileSync(o.svg, R.cardSvg(d, JA)); console.log(L(`wrote ${o.svg}`, `${o.svg} を書き出しました`)); }
     if (o.card || !o.svg) console.log('\n' + R.card(d, JA) + '\n');
     return;
   }

@@ -862,6 +862,24 @@ console.log('== period flags are honoured or refused, never ignored ==');
   ok('★ leaks --until is refused (exit 2), not ignored', lcode(['--until', '20260201']) === 2);
 }
 
+console.log('== hours --svg ==');
+{
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const cwd = path.join(tmp, 'svg');
+  fs.mkdirSync(cwd, { recursive: true });
+  const dirArgs = ['--dir', `claude=${path.join(tmp, 'claude')}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`];
+  const run = (args) => { try { return { code: 0, out: execFileSync('node', [bin, ...args, ...dirArgs], { encoding: 'utf8', stdio: 'pipe', cwd }) }; } catch (e) { return { code: e.status, out: e.stdout, err: e.stderr }; } };
+  const missing = run(['hours', '--svg', path.join(cwd, 'no-such-dir', 'card.svg')]);
+  ok('★ --svg into a missing directory: clean message, exit 2, no stack trace', missing.code === 2 && /does not exist/.test(missing.err) && !/\n\s+at /.test(missing.err));
+  const isDir = run(['hours', '--svg', cwd]);
+  ok('★ --svg onto a directory: clean message, exit 2', isDir.code === 2 && /is a directory/.test(isDir.err) && !/\n\s+at /.test(isDir.err));
+  const pos = run(['--svg', 'hours']);
+  ok('★ `--svg hours` keeps hours as the command and writes the default file', pos.code === 0 && fs.existsSync(path.join(cwd, 'agstats.svg')) && !fs.existsSync(path.join(cwd, 'hours')));
+  const both = run(['hours', '--svg', 'x.svg', '--json']);
+  ok('★ --svg with --json writes the file and prints JSON', both.code === 0 && fs.existsSync(path.join(cwd, 'x.svg')) && JSON.parse(both.out).svg === 'x.svg');
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

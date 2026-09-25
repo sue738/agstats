@@ -1048,6 +1048,184 @@ console.log('== retention: when Claude Code deletes what is here (cclogsall diag
   ok('agents text: when the oldest goes and how many within 7 days', /cleanupPeriodDays=30 \(default\) — the oldest session \(\S+\) is deleted in 1 day\(s\), on \S+; 3 session\(s\) expire within 7 days/.test(txt));
 }
 
+console.log('== sends: what each request sent (ccsendstats port) ==');
+{
+  const Wire = require('../lib/wire.js');
+  const Sends = require('../lib/metrics/sends.js');
+  ok('estTokens: bytes / 4, rounded', Wire.estTokens('abcd'.repeat(10)) === 10 && Wire.estTokens('') === 0 && Wire.estTokens('あ') === 1);
+  const sp = Wire.splitInjected('hi <system-reminder>x</system-reminder> there');
+  ok('splitInjected moves runtime tags out of your words', sp.injected === '<system-reminder>x</system-reminder>' && sp.rest === 'hi  there');
+  ok('median of an even list is the mean of the middle two; empty is null', Sends.median([4, 1, 3, 2]) === 2.5 && Sends.median([]) === null);
+
+  // ---- claude: numbers computed by hand
+  const base = path.join(tmp, 'sends', 'claude');
+  const sid = 'dddddddd-0000-0000-0000-000000000001';
+  const claudeLines = [
+    // 40 bytes typed (10 tok) + a 58-byte reminder (14.5 → 15 tok)
+    mk({ type: 'user', timestamp: iso(0), cwd: '/p', message: { role: 'user', content: 'a'.repeat(40) + '<system-reminder>' + 'r'.repeat(23) + '</system-reminder>' } }),
+    mk({ type: 'assistant', timestamp: iso(1), message: { id: 'm1', role: 'assistant', model: 'claude-x', usage: { input_tokens: 100, cache_read_input_tokens: 1000, cache_creation_input_tokens: 200, cache_creation: { ephemeral_1h_input_tokens: 150, ephemeral_5m_input_tokens: 50 }, output_tokens: 10 },
+      content: [{ type: 'thinking', thinking: 't'.repeat(80) }, { type: 'tool_use', id: 'u1', name: 'Bash', input: { cmd: 'ls' } }] } }),
+    // the same response continued on a second line, usage repeated: not a second request
+    mk({ type: 'assistant', timestamp: iso(1), message: { id: 'm1', role: 'assistant', model: 'claude-x', usage: { input_tokens: 100, cache_read_input_tokens: 1000, cache_creation_input_tokens: 200, output_tokens: 10 }, content: [{ type: 'text', text: 'y'.repeat(40) }] } }),
+    mk({ type: 'user', timestamp: iso(2), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'u1', content: 'z'.repeat(400) }] } }),
+    // runtime context and a sidechain request: outside the main loop, as in ccsendstats
+    mk({ type: 'user', timestamp: iso(3), isMeta: true, message: { role: 'user', content: 'q'.repeat(400) } }),
+    mk({ type: 'assistant', timestamp: iso(3), isSidechain: true, message: { id: 'side', role: 'assistant', usage: { input_tokens: 99999 }, content: [] } }),
+    mk({ type: 'assistant', timestamp: iso(4), message: { id: 'm2', role: 'assistant', model: 'claude-x', usage: { input_tokens: 5, cache_read_input_tokens: 1300, cache_creation_input_tokens: 400, output_tokens: 3 }, content: [{ type: 'text', text: 'w'.repeat(8) }] } }),
+    '{"broken',
+  ];
+  writeFile(path.join(base, '-p', `${sid}.jsonl`), claudeLines);
+  writeFile(path.join(base, '-p', sid, 'subagents', 'agent-s.jsonl'), [
+    mk({ type: 'assistant', timestamp: iso(9), message: { id: 's1', role: 'assistant', usage: { input_tokens: 7 }, content: [] } }),
+  ]);
+  const cr = Claude.readSends({ dir: base });
+  ok('claude: subagent transcripts are left out', cr.sessions.length === 1 && cr.sessions[0].id === sid);
+  const a = Sends.analyze(cr.sessions[0]);
+  ok('★ claude: 2 requests (one response over two lines is one; sidechain is none)', a.requests === 2);
+  ok('★ claude: real totals = input + cache read + cache creation', a.first.sent === 1300 && a.last.sent === 1705);
+  ok('★ claude: visible before the latest request, by category', a.visible.userText === 10 && a.visible.injected === 15 && a.visible.thinking === 20
+    && a.visible.toolInputs === 3 && a.visible.assistantText === 10 && a.visible.toolResults === 100 && a.visible.total === 158);
+  ok('★ claude: invisible = latest real total − visible (1705 − 158)', a.invisible === 1547 && Math.abs(a.invisibleShare - 1547 / 1705) < 1e-12);
+  ok('★ claude: first-request overhead = first real total − your first message (1300 − 10)', a.baseline === 1290 && a.firstPrompt.chars === 40 && a.firstPrompt.est === 10);
+  ok('claude: cache split of the latest request', Math.abs(a.cache.read - 1300 / 1705) < 1e-12 && Math.abs(a.cache.write - 400 / 1705) < 1e-12 && Math.abs(a.cache.uncached - 5 / 1705) < 1e-12);
+  ok('★ claude: an unsplit cache write has no 1h/5m — not recorded, not filed under 5m', a.last.cacheWrite1h === null && a.last.cacheWrite5m === null && a.cache.write1h === null);
+  ok('claude: the recorded 1h/5m split is kept', a.first.cacheWrite1h === 150 && a.first.cacheWrite5m === 50);
+  ok('claude: session totals', a.totals.sent === 3005 && a.totals.cacheRead === 2300 && a.totals.cacheWrite === 600 && a.totals.cacheWrite1h === 150);
+
+  // ---- parity with ccsendstats, when it is on this machine
+  let CS = null, CT = null;
+  for (const d of [path.join(os.homedir(), 'private', 'ccsendstats', 'lib'), path.join(os.homedir(), 'private', 'playground-tools', 'apps', 'ccsendstats', 'lib')]) {
+    try { CS = require(path.join(d, 'sendstats.js')); CT = require(path.join(d, 'vendor', 'transcript.js')); break; } catch (e) { CS = null; CT = null; }
+  }
+  if (!CS) console.log('  (ccsendstats not on this machine — sends parity test skipped)');
+  else {
+    // a second transcript with the shapes ccsendstats special-cases: array tool
+    // results, a command echo, an injected-only first turn, no usage on a line
+    const f2 = path.join(base, '-q', 'dddddddd-0000-0000-0000-000000000002.jsonl');
+    writeFile(f2, [
+      mk({ type: 'user', timestamp: iso(0), message: { role: 'user', content: [{ type: 'text', text: '<command-name>/model</command-name><command-args></command-args>' }] } }),
+      mk({ type: 'user', timestamp: iso(1), message: { role: 'user', content: [{ type: 'text', text: '  日本語で答えて ' }, { type: 'text', text: '<local-command-stdout>ok</local-command-stdout>more' }] } }),
+      mk({ type: 'assistant', timestamp: iso(2), message: { id: 'p1', model: 'claude-y', usage: { input_tokens: 3, cache_read_input_tokens: 0, cache_creation_input_tokens: 2048, cache_creation: { ephemeral_1h_input_tokens: 2048, ephemeral_5m_input_tokens: 0 }, output_tokens: 9 },
+        content: [{ type: 'tool_use', id: 'k', name: 'Read', input: { file_path: '/x/y' } }, { type: 'text', text: 'reading' }] } }),
+      mk({ type: 'user', timestamp: iso(3), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'k', content: [{ type: 'text', text: 'line1' }, { type: 'image' }, { type: 'text', text: 'line2 ✓' }] }] } }),
+      mk({ type: 'assistant', timestamp: iso(4), message: { id: 'p2', model: 'claude-y', content: [{ type: 'text', text: 'no usage here' }] } }),
+      mk({ type: 'assistant', timestamp: iso(5), message: { id: 'p3', model: 'claude-y', usage: { input_tokens: 1, cache_read_input_tokens: 2051, cache_creation_input_tokens: 40, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 40 }, output_tokens: 2 }, content: 'plain string reply' } }),
+    ]);
+    for (const [label, file] of [['hand fixture', path.join(base, '-p', `${sid}.jsonl`)], ['edge fixture', f2]]) {
+      const text = fs.readFileSync(file, 'utf8');
+      const cc = CS.analyze(CT.parseLines(text));
+      const me = Sends.analyze(Claude.sendsOf(text, file, base));
+      const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+      ok(`★ parity (${label}): request count, first and last real totals`, cc.requests.length === me.requests && cc.first.realIn === me.first.sent && cc.last.realIn === me.last.sent);
+      ok(`★ parity (${label}): every visible category and the total`, ['userText', 'injected', 'toolResults', 'assistantText', 'thinking', 'toolInputs', 'total'].every((k) => cc.visible[k] === me.visible[k]));
+      ok(`★ parity (${label}): invisible, first-request overhead, first prompt`, cc.invisible === me.invisible && cc.baseline === me.baseline && same(cc.firstPrompt, me.firstPrompt));
+      ok(`★ parity (${label}): cache read / write / uncached of the latest request`, cc.last.cacheRead === me.last.cacheRead && cc.last.cacheWrite === me.last.cacheWrite && cc.last.uncached === me.last.uncached);
+      const ttlCc = cc.requests.map((r) => [r.cacheWrite1h, r.cacheWrite5m]);
+      const ttlMe = [me.first, me.last].map((r) => [r.cacheWrite1h, r.cacheWrite5m]);
+      if (label === 'edge fixture') ok('★ parity (edge fixture): 1h/5m split where recorded', same([ttlCc[0], ttlCc[ttlCc.length - 1]], ttlMe));
+      else ok('the one deliberate difference: ccsendstats files an unsplit write under 5m, sends leaves it unrecorded', ttlCc[ttlCc.length - 1][1] === 400 && ttlMe[1][1] === null);
+    }
+  }
+
+  // ---- codex
+  const cxDir = path.join(tmp, 'sends', 'codex', '2026', '01', '01');
+  const tc = (input, cached, out, cum) => mk({ timestamp: iso(cum), type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: out, total_tokens: input + out }, total_token_usage: { total_tokens: cum } } } });
+  writeFile(path.join(cxDir, 'rollout-2026-01-01T12-00-00-eeeeeeee-0000-0000-0000-000000000001.jsonl'), [
+    mk({ timestamp: iso(0), type: 'session_meta', payload: { id: 'eeeeeeee-0000-0000-0000-000000000001', cwd: '/c', base_instructions: { text: 'b'.repeat(40) } } }),
+    mk({ timestamp: iso(0), type: 'turn_context', payload: { cwd: '/c', model: 'gpt-x' } }),
+    mk({ timestamp: iso(1), type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'd'.repeat(20) }] } }),
+    mk({ timestamp: iso(1), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>' + 'e'.repeat(19) + '</environment_context>' }] } }),
+    mk({ timestamp: iso(1), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'u'.repeat(12) }] } }),
+    mk({ timestamp: iso(2), type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 's'.repeat(16) }], encrypted_content: 'X'.repeat(4000) } }),
+    mk({ timestamp: iso(2), type: 'response_item', payload: { type: 'function_call', name: 'shell', call_id: 'c1', arguments: 'a'.repeat(8) } }),
+    tc(500, 400, 5, 505),
+    tc(500, 400, 5, 505), // repeated with no new request
+    mk({ timestamp: iso(3), type: 'response_item', payload: { type: 'function_call_output', call_id: 'c1', output: 'o'.repeat(40) } }),
+    mk({ timestamp: iso(4), type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'r'.repeat(24) }] } }),
+    tc(800, 700, 6, 1311),
+  ]);
+  writeFile(path.join(cxDir, 'rollout-2026-01-01T13-00-00-eeeeeeee-0000-0000-0000-000000000002.jsonl'), [
+    mk({ timestamp: iso(10), type: 'session_meta', payload: { id: 'eeeeeeee-0000-0000-0000-000000000002', cwd: '/c' } }),
+    mk({ timestamp: iso(11), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] } }),
+    mk({ timestamp: iso(12), type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, total_tokens: 999 }, total_token_usage: { total_tokens: 999 } } } }),
+  ]);
+  const cx = Codex.readSends({ dir: path.join(tmp, 'sends', 'codex'), keepRequests: true }).sessions;
+  const c1 = Sends.analyze(cx.find((x) => x.id.endsWith('1'))), c2 = Sends.analyze(cx.find((x) => x.id.endsWith('2')));
+  ok('★ codex: a repeated token_count is not a second request', c1.requests === 2);
+  ok('★ codex: input_tokens is the real total (cached part included); uncached = input − cached', c1.first.sent === 500 && c1.first.cacheRead === 400 && c1.first.uncached === 100 && c1.last.sent === 800);
+  ok('★ codex: base_instructions is the recorded system prompt; developer + runtime user turns are injected', c1.visible.system === 10 && c1.visible.injected === 21 && c1.visible.userText === 3);
+  // developer 20 B (5) + <environment_context> turn 62 B (15.5 → 16) = 21 injected.
+  // The latest request carried everything up to its last input (the tool output), not its own reply
+  ok('★ codex: what a request carried stops at its last input, not its own response', c1.visible.toolResults === 10 && c1.visible.assistantText === 0 && c1.visible.thinking === 4 && c1.visible.toolInputs === 2 && c1.visible.total === 50);
+  ok('codex: invisible = 800 − 50; the first message is the typed one', c1.invisible === 750 && c1.baseline === 497 && c1.firstPrompt.chars === 12);
+  ok('★ codex: a combined total with no input side is "total only", never used as the input', c2.usage === 'total-only' && c2.last === null && c2.invisible === null && c2.baseline === null && c2.list[0].total === 999 && c2.list[0].sent === null);
+
+  // ---- gemini: $set replaces the message list, $push appends
+  const gmDir = path.join(tmp, 'sends', 'gemini');
+  const um = { id: 'm1', timestamp: iso(0), type: 'user', content: 'g'.repeat(20) };
+  writeFile(path.join(gmDir, 'proj', 'chats', 'session-1.jsonl'), [
+    mk({ sessionId: 'person-1', startTime: iso(0) }),
+    mk({ $set: { messages: [um] } }),
+    mk({ $set: { messages: [um, { id: 'm2', timestamp: iso(1), type: 'gemini', content: 'h'.repeat(8), tokens: { input: 300, cached: 100, output: 5 }, model: 'gemini-x' }] } }),
+    mk({ $push: { messages: { id: 'm3', timestamp: iso(2), type: 'gemini', content: 'i'.repeat(4), toolCalls: [{ name: 'read_file', args: { p: 1 }, result: 'j'.repeat(40) }] } } }),
+  ]);
+  writeFile(path.join(gmDir, 'proj', 'chats', 'session-2.jsonl'), [mk({ sessionId: 'person-2', startTime: iso(5) }), mk({ $set: { messages: [{ id: 'x', timestamp: iso(5), type: 'user', content: 'hi' }] } })]);
+  writeFile(path.join(gmDir, 'proj', 'chats', 'session-3.jsonl'), [mk({ sessionId: 'a2a-server', startTime: iso(6) }), mk({ $set: { messages: [{ id: 'x', timestamp: iso(6), type: 'gemini', tokens: { input: 5 } }] } })]);
+  const gm = Gemini.readSends({ dir: gmDir }).sessions;
+  const g1 = Sends.analyze(gm.find((x) => x.id === 'session-1'));
+  ok('gemini: an a2a-server chat is left out unless --include-automated', gm.length === 2 && Gemini.readSends({ dir: gmDir, includeAutomated: true }).sessions.length === 3);
+  ok('★ gemini: a rewritten history ($set) is read once, not twice', g1.firstPrompt.est === 5 && g1.visible.userText === 5 && g1.requests === 1);
+  ok('gemini: tokens.input is the total, tokens.cached its cache read; no cache write recorded', g1.last.sent === 300 && g1.last.cacheRead === 100 && g1.last.uncached === 200 && g1.last.cacheWrite === null && g1.cache.write === null);
+  ok('★ gemini: a chat with no tokens reads "not recorded", never zero', Sends.analyze(gm.find((x) => x.id === 'session-2')).usage === 'none' && Sends.analyze(gm.find((x) => x.id === 'session-2')).last === null);
+
+  // ---- cursor: bubbles in the thread's order, tokenCount as the total
+  {
+    const tally = new Wire.Tally();
+    Cursor.sendsOfBubbles([
+      { type: 1, text: 'k'.repeat(40), createdAt: iso(0) },
+      { type: 2, text: 'l'.repeat(8), createdAt: iso(1), tokenCount: { inputTokens: 900, outputTokens: 4 }, toolFormerData: { name: 'read_file', params: 'p'.repeat(12), result: 'm'.repeat(20) } },
+      { type: 2, text: 'n'.repeat(4), createdAt: iso(2), tokenCount: { inputTokens: 0, outputTokens: 0 } },
+    ], tally);
+    const cu = Sends.analyze({ agent: 'cursor', id: 'z', ...tally.result() });
+    ok('★ cursor: only a non-zero inputTokens is a request; no cache split recorded', cu.requests === 1 && cu.last.sent === 900 && cu.last.cacheRead === null && cu.cache.read === null);
+    ok('cursor: the request carried what came before its bubble', cu.visible.userText === 10 && cu.visible.total === 10 && cu.invisible === 890);
+  }
+
+  // ---- the CLI
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const dirArgs = ['--dir', `claude=${base}`, '--dir', `codex=${path.join(tmp, 'sends', 'codex')}`, '--dir', `gemini=${gmDir}`, '--dir', `cursor=${nope}`];
+  const run = (args, extra = dirArgs) => { try { return { code: 0, out: execFileSync('node', [bin, ...args, ...extra], { encoding: 'utf8', stdio: 'pipe' }) }; } catch (e) { return { code: e.status, out: e.stdout, err: e.stderr }; } };
+  const one = JSON.parse(run(['sends', '--json', '--session', 'dddddddd-0000-0000-0000-000000000001']).out);
+  ok('★ sends --session --json: the hand-computed numbers, with the estimate named', one.agent === 'claude' && one.last.sent === 1705 && one.invisible === 1547 && one.baseline === 1290 && one.estimate === 'bytes / 4' && one.list.length === 2);
+  ok('sends --session picks by id prefix across agents', JSON.parse(run(['sends', '--json', '--session', 'eeeeeeee-0000-0000-0000-000000000001']).out).agent === 'codex');
+  // the first codex rollout's last token_count is stamped 12:21:51, later than anything else
+  ok('★ sends defaults to the latest session, whichever agent wrote it', JSON.parse(run(['sends', '--json', '--all']).out).session === 'eeeeeeee-0000-0000-0000-000000000001');
+  ok('sends --agent narrows the latest', JSON.parse(run(['sends', '--json', '--all', '--agent', 'claude']).out).agent === 'claude');
+  ok('sends --session with no match exits 1', run(['sends', '--session', 'nomatch']).code === 1);
+  ok('sends --json with nothing to show answers null', run(['sends', '--json', '--session', 'nomatch']).out.trim() === 'null');
+  const nr = run(['sends', '--session', 'session-2']).out;
+  ok('★ sends text for an agent without usage says "not recorded", and prints no total', /not recorded/.test(nr) && !/Last request/.test(nr));
+  ok('sends text: totals real, breakdown estimated', /totals are real/.test(run(['sends', '--session', 'dddddddd-0000-0000-0000-000000000001']).out));
+  const cmp = JSON.parse(run(['sends', '--by-agent', '--json', '--all']).out);
+  const row = (x) => cmp.agents.find((r) => r.agent === x);
+  ok('★ sends --by-agent: per-agent medians from the sessions that recorded usage', row('claude').recorded === 2 && row('claude').sessions === 2 && row('claude').medianBaseline != null
+    && row('codex').recorded === 1 && row('codex').totalOnly === 1 && row('codex').medianBaseline === 497);
+  ok('★ sends --by-agent: an agent with no usage has null medians, not zeros', row('gemini').recorded === 1 && row('gemini').notRecorded === 1);
+  ok('★ sends --by-agent: a missing agent is "not installed"', row('cursor').installed === false && /not installed/.test(run(['sends', '--by-agent', '--all']).out));
+  ok('sends --by-agent: cache split is null for an agent that records none', row('gemini').cache !== null && row('codex').ttl === null);
+  const period = JSON.parse(run(['sends', '--by-agent', '--json', '--since', '20300101']).out);
+  ok('★ sends --by-agent honours the period (nothing started after 2030)', period.agents.filter((r) => r.installed).every((r) => r.sessions === 0));
+  ok('sends --by-agent defaults to the last 30 days (fixtures are older)', JSON.parse(run(['sends', '--by-agent', '--json']).out).agents.filter((r) => r.installed).every((r) => r.sessions === 0));
+  const zlib = require('zlib');
+  const sarch = path.join(tmp, 'sends', 'archive');
+  fs.mkdirSync(path.join(sarch, 'projects', '-p'), { recursive: true });
+  fs.writeFileSync(path.join(sarch, 'projects', '-p', 'ffffffff-0000-0000-0000-00000000000a.jsonl.gz'), zlib.gzipSync(claudeLines.join('\n')));
+  ok('★ sends --archive reads an archived session', JSON.parse(run(['sends', '--json', '--session', 'ffffffff', '--archive', sarch]).out).archived === true
+    && run(['sends', '--json', '--session', 'ffffffff']).out.trim() === 'null');
+  ok('--help lists sends', /\bsends\b/.test(run(['--help']).out));
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

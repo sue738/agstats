@@ -44,6 +44,7 @@ every metric unless `--include-automated`.
 | `waits` | time you waited for the agent, and the agent for you |
 | `advise` | what to change, from what was measured (changes nothing itself) |
 | `guards` | whether a hook you added stopped the failure — before vs after |
+| `sends` | what each request sent: real totals, cache split, estimated breakdown, overhead before your first message; `--by-agent` compares agents |
 
 Every command takes `--json`, and a period: `--today`, `--week`, `--month`,
 `--days N`, `--all`, `--since YYYYMMDD`, `--until YYYYMMDD` (`leaks` picks files
@@ -64,6 +65,7 @@ up; wall-clock time is shown beside them.
 - The only writes are `hours --svg`, `quota --set`/`--clear` and `guards add`/`rm`
   (under `~/.agstats/`), and `leaks scrub`, which asks first and keeps a backup.
 - History is only as long as each agent keeps it (Claude Code: 30 days by default — `agents` says when the next deletion is due, and `--archive` reads past it).
+- `sends` totals are the providers' own usage figures; the breakdown is estimated from bytes (~4/token), and "invisible" (system prompt, tool definitions) is the remainder. An agent that records no usage shows *not recorded*.
 - `attention` flags are regex heuristics (English and Japanese) — read them as a trend.
 
 ## As a library

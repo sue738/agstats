@@ -4,6 +4,7 @@ module.exports = {
   brand: require('./lib/brand.js'),
   model: require('./lib/model.js'),
   dialogue: require('./lib/dialogue.js'),
+  wire: require('./lib/wire.js'),
   readers: require('./lib/readers/index.js'),
   render: require('./lib/render.js'),
   metrics: {
@@ -21,5 +22,6 @@ module.exports = {
     advise: require('./lib/metrics/advise.js'),
     overlap: require('./lib/metrics/overlap.js'),
     waits: require('./lib/metrics/waits.js'),
+    sends: require('./lib/metrics/sends.js'),
   },
 };

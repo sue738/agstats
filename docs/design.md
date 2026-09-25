@@ -47,6 +47,15 @@ Name: `agstats`. npm refused `agentstats` as too similar to `agent-stats`, and
    subagents by id; a shared native id (Gemini) falls back to the file path.
    Violating this merged 28,865 sessions into one 85-hour "longest run".
 
+7. **Parity with ccsendstats.** On the same Claude Code transcript, `sends`
+   reports the same request count, per-request real totals (input +
+   cache-read + cache-creation, de-duplicated by message.id), every estimated
+   category, invisible remainder, first-request overhead and first prompt as
+   ccsendstats' `analyze()`. `test/test.js` requires ccsendstats when it is on
+   this machine and compares both on fixtures. One deliberate difference: a
+   cache write with no `usage.cache_creation` has no 1h/5m split — ccsendstats
+   files it under 5m, `sends` leaves both null (undercount, never invent).
+
 ## Normalised model
 
 Every reader turns its native format into this and nothing else:
@@ -129,6 +138,27 @@ call to `op` (read / write / shell / outbound / other) and `input`
 | gemini | run_shell_command (`command`) | write_file, replace (`file_path`) | read_file, read_many_files, list_directory, glob, search_file_content, google_web_search, web_fetch | — |
 | cursor | run_terminal_cmd (`command`) | edit_file, search_replace, reapply, delete_file (`relativeWorkspacePath`, relative — classified as unknown location → contained) | read_file, list_dir, grep_search, codebase_search, file_search, web_search | `mcp*` |
 
+Sends does not use the model either: it needs the byte length of every
+block, and the model keeps no text. Each reader exports `readSends(opts)`,
+which walks its format once and feeds `lib/wire.js` a Tally — text blocks by
+category, requests with their usage — and returns numbers only. What each
+format records as usage:
+
+| agent | real total per request | cache | 1h/5m write |
+|---|---|---|---|
+| claude | `usage` input + cache_read + cache_creation | read / write / uncached | `usage.cache_creation`, when present |
+| codex | event_msg token_count `last_token_usage.input_tokens` (cached included); repeats with an unchanged running total dropped | `cached_input_tokens` read; `cache_write_input_tokens` | — |
+| codex (Desktop, 2026-09) | only `total_tokens` (input + output): "total only", never used as the input | — | — |
+| gemini | `tokens.input` on a gemini message (gemini-cli's recorder format; no sample on the author's machine carries it) | `tokens.cached` read | — |
+| cursor | assistant bubble `tokenCount.inputTokens` (Cursor's own count; per request or per turn is undocumented) | — | — |
+
+A request carried what the transcript shows before it: Claude and Cursor
+write usage on the response itself; Codex writes it after, so the snapshot is
+taken at the request's last input. Codex's `base_instructions` is the system
+prompt, recorded (category `system`); its encrypted reasoning is not
+measurable and falls in the remainder. Subagent transcripts are left out, as
+in ccsendstats.
+
 Leaks does not use the model: it streams each reader's `rawSources()` (files
 line by line; Cursor's database as value chunks) because it needs every byte
 and the model deliberately keeps none of the text.
@@ -151,6 +181,7 @@ and the model deliberately keeps none of the text.
 | `guards` | ccflaky relapse (rates before/after a registered guard; verdict refuses <20 calls after) — registry `~/.agstats/guards.json` | v0 |
 | `overlap` | new: same absolute path written by two root sessions (subagents fold into their parent) within a window; default 30 min, with a 24 h hint when empty | v0 |
 | `waits` | new: the gaps `hours` discards, attributed — you → agent (spinner), agent → you (reply left waiting, capped 6 h), call → result over 60 s (permission prompt or slow tool) | v0 |
+| `sends` | ccsendstats (transcript analysis, not the proxy): per-request real totals, cache split, 1h/5m write, category estimate, invisible remainder, first-request overhead; `--by-agent` compares the medians across agents | v0 |
 | `advise` | new: findings over the metrics above. A finding exists only if it has a printed threshold, a hand-over artifact where one makes sense, and a re-measure command. Applies nothing | v0 |
 
 `board` / `now` (a live kanban) live in the separate package `agentkanban`,
@@ -172,9 +203,9 @@ rule existed.
 
 Not ported, and why:
 
-- **ccsendstats** (what each request sent to the API, by category): needs the
-  byte length of every text block per request. Possible as a raw-source
-  metric like leaks; not done.
+- **ccsendstats' proxy** (`ccsendstats proxy`): it relays live traffic to see
+  the system prompt and tool schemas; this package never touches the network.
+  The transcript analysis is ported as `sends`.
 - **ccinside** (the one-page HTML report over everything): a renderer over
   the metrics above; the metrics exist now, the page does not.
 - **ccblackbox / ccattest / cctranscript / ccprompt**: hook-based recorders,

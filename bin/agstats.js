@@ -28,6 +28,7 @@ const Guards = require('../lib/metrics/guards.js');
 const Advise = require('../lib/metrics/advise.js');
 const Overlap = require('../lib/metrics/overlap.js');
 const Waits = require('../lib/metrics/waits.js');
+const Sends = require('../lib/metrics/sends.js');
 const R = require('../lib/render.js');
 const M = require('../lib/model.js');
 const Claude = require('../lib/readers/claude.js');
@@ -58,6 +59,8 @@ Commands:
   advise           what to change, from what was measured — with thresholds, an artifact, and the command that re-measures (--show <id>)
   overlap          the same file written by two sessions within 30 min (--window N) — the collisions nobody saw
   waits            who waited for whom: you for the agent, the agent for you, per day (--by-agent)
+  sends            what each request sent: real totals, cache split, estimated breakdown, invisible overhead
+                   (latest session; --session ID; --by-agent compares agents over the period, default 30 days)
 
 Scope:
   --agent a[,b]        only these agents (${Readers.NAMES.join(', ')})
@@ -77,6 +80,8 @@ Output:
   --suggest        (tools) tools over 20% failure with their failures clustered
   --scope main|both (tools) main-loop only (default) or include subagents' own tool use
   --list           (blast) show examples of every escaped action
+  --session ID     (diff, sends) the session whose id starts with ID
+  --by-agent       (waits) rows per agent; (sends) compare agents: median overhead before your first message, invisible share
 
 Tuning:
   --idle-gap N     silence (seconds) counted as "stopped" (default ${H.IDLE_GAP_S})
@@ -84,7 +89,7 @@ Tuning:
 Reads local files only, no network. Writes only where asked: \`hours --svg\` (the card),
 \`quota --set/--clear\` and \`guards add/rm\` (under ~/.${NAME}/), and \`leaks scrub\` (asks first, backs up).`;
 
-const COMMANDS = ['agents', 'hours', 'tools', 'blast', 'leaks', 'stats', 'timeline', 'quota', 'diff', 'skills', 'attention', 'guards', 'advise', 'overlap', 'waits'];
+const COMMANDS = ['agents', 'hours', 'tools', 'blast', 'leaks', 'stats', 'timeline', 'quota', 'diff', 'skills', 'attention', 'guards', 'advise', 'overlap', 'waits', 'sends'];
 
 function parseArgs(argv) {
   const o = { dirs: {} };
@@ -969,11 +974,143 @@ function cmdWaits(o, found) {
   ツールが待った = 結果が返るまで ${Waits.TOOL_WAIT_S} 秒超かかったツール呼び出し = 許可プロンプトか遅いツール(転記では区別できない)。メインループの人の発話のみ。`));
 }
 
+// ---------------------------------------------------------------- sends
+
+const CAT_LABELS = () => ([
+  ['toolResults', L('tool results', 'ツール実行結果')],
+  ['assistantText', L('assistant text', 'アシスタント本文')],
+  ['thinking', L('thinking blocks', 'thinking ブロック')],
+  ['toolInputs', L('tool call inputs', 'ツール呼び出し入力')],
+  ['injected', L('injected context (reminders, hooks)', '注入コンテキスト(リマインダ・フック)')],
+  ['userText', L('your own words', 'あなたの本文')],
+  ['system', L('system prompt (recorded)', 'system prompt(記録あり)')],
+]);
+
+const pct = (x) => (x == null ? L('not recorded', '記録なし') : `${(x * 100).toFixed(1)}%`);
+const HONEST = () => L('  totals are real (the provider\'s usage, as the agent wrote it down); the breakdown is estimated from bytes (~4 bytes/token)\n  of what the transcript shows, and invisible overhead is the remainder. Main sessions only; subagents are left out.',
+  '  合計は実測(エージェントが書き残したプロバイダの usage)。内訳は転記に写っている中身のバイト数からの概算(~4 bytes/token)で、\n  不可視オーバーヘッドはその残り。メインセッションのみ(サブエージェントは含めない)。');
+
+/** "cache: 91.2% read · 7.9% write (1h 7.0% · 5m 0.9%) · 0.9% uncached", or why it is missing. */
+function cacheLine(agent, c) {
+  if (!c || c.read == null) return L(`cache: not recorded — ${agent} writes no cache split`, `キャッシュ: 記録なし — ${agent} はキャッシュの内訳を書きません`);
+  const ttl = c.write1h != null ? ` (1h ${pct(c.write1h)} · 5m ${pct(c.write5m)})` : (c.write ? L(' (1h/5m not recorded)', '(1h/5m は記録なし)') : '');
+  return L(`cache: ${pct(c.read)} read · ${pct(c.write)} write${ttl} · ${pct(c.uncached)} uncached`, `キャッシュ: 読取 ${pct(c.read)} · 書込 ${pct(c.write)}${ttl} · 非キャッシュ ${pct(c.uncached)}`);
+}
+
+function printBreakdown(v, whole) {
+  for (const [k, label] of CAT_LABELS()) {
+    if (!v[k]) continue;
+    console.log(`    ${R.padEndW(label, JA ? 30 : 36)} ${n(v[k]).padStart(10)}${whole ? `  ${pct(v[k] / whole).padStart(6)}` : ''}`);
+  }
+}
+
+function printSendsSession(a) {
+  const reqs = a.usage === 'total-only' ? L(`${n(a.totalOnly)} requests (total only)`, `${n(a.totalOnly)} リクエスト(合計のみ)`) : L(`${n(a.requests)} requests`, `${n(a.requests)} リクエスト`);
+  const head = [a.agent, a.session.slice(0, 8), short(a.project || '?'), reqs];
+  if (a.model) head.push(a.model);
+  if (a.archived) head.push(L('archived', 'アーカイブ'));
+  console.log(R.banner(`${NAME} sends — ${head.join(' · ')}`));
+  if (a.usage !== 'recorded') {
+    if (a.usage === 'total-only') {
+      const lastTotal = a.list && a.list.length ? a.list[a.list.length - 1].total : null;
+      console.log(L(`Usage: not recorded on the input side — ${a.agent} wrote only a combined input + output figure for ${n(a.totalOnly)} request(s)${lastTotal ? ` (latest: ${n(lastTotal)})` : ''},`,
+        `使用量: 入力側は記録なし — ${a.agent} は ${n(a.totalOnly)} リクエストについて入力+出力の合計値だけを書いています${lastTotal ? `(最新: ${n(lastTotal)})` : ''}。`));
+      console.log(L('  so there is no real input total to split, and no invisible share.', '  実測の入力総量がないため、内訳の比率も不可視分も出せません。'));
+    } else {
+      console.log(L(`Usage: not recorded — ${a.agent} wrote no token figures for this session, so nothing below is a measured total.`,
+        `使用量: 記録なし — ${a.agent} はこのセッションのトークン数を書いていません。以下に実測の合計はありません。`));
+    }
+    console.log(L(`\n  visible in transcript (est.): ${n(a.visible.total)} tokens`, `\n  転記から見える分(概算): ${n(a.visible.total)} トークン`));
+    printBreakdown(a.visible, 0);
+    console.log('\n' + HONEST());
+    return;
+  }
+  const last = a.last;
+  console.log(L(`Last request: ${n(last.sent)} tokens sent (real, from the provider's usage fields)`, `最終リクエスト: ${n(last.sent)} トークン送信(プロバイダの usage の実測値)`));
+  console.log(`  ${cacheLine(a.agent, a.cache)}`);
+  console.log(L(`\n  visible in transcript (est.): ${n(a.visible.total)}  ${pct(a.visible.total / last.sent)}`, `\n  転記から見える分(概算): ${n(a.visible.total)}  ${pct(a.visible.total / last.sent)}`));
+  printBreakdown(a.visible, last.sent);
+  console.log(L(`  invisible overhead (est.): ${n(a.invisible)}  ${pct(a.invisibleShare)}`, `  不可視オーバーヘッド(概算): ${n(a.invisible)}  ${pct(a.invisibleShare)}`));
+  console.log(L('    system prompt + tool definitions + anything not recorded in the transcript', '    system prompt + ツール定義 + 転記に記録されないもの'));
+  if (a.baseline != null && a.firstPrompt) {
+    console.log(L(`\nFirst request: ${n(a.baseline)} tokens went out before your first message (your message: ${n(a.firstPrompt.chars)} chars ≈ ${n(a.firstPrompt.est)} tok)`,
+      `\n最初のリクエスト: 最初の一言より前に ${n(a.baseline)} トークン送信(あなたの一言: ${n(a.firstPrompt.chars)} 文字 ≈ ${n(a.firstPrompt.est)} tok)`));
+  }
+  const t = a.totals;
+  console.log(L(`\nWhole session: ${n(t.sent)} tokens sent over ${n(a.requests)} requests · ${cacheLine(a.agent, t.cache)}`, `\nセッション全体: ${n(a.requests)} リクエストで ${n(t.sent)} トークン送信 · ${cacheLine(a.agent, t.cache)}`));
+  if (a.totalOnly) console.log(L(`  + ${n(a.totalOnly)} request(s) with only a combined input + output figure, left out of the above`, `  + 入力+出力の合計値しかない ${n(a.totalOnly)} リクエストは上に含めていません`));
+  console.log('\n' + HONEST());
+}
+
+function printSendsCompare(rows, label) {
+  console.log(R.banner(L(`${NAME} sends — by agent (${label}, sessions started in the period)`, `${NAME} sends — エージェント別 (${label}、期間内に始まったセッション)`)));
+  const NR = L('not recorded', '記録なし');
+  const tok = (x) => (x == null ? NR : n(Math.round(x)));
+  const tbl = rows.map((r) => {
+    if (!r.installed) return [r.agent, L('not installed', '未検出'), '', '', '', '', '', ''];
+    if (!r.sessions) return [r.agent, '0', '', '', '', '', '', ''];
+    const usage = [r.recorded ? L(`${n(r.recorded)} recorded`, `記録あり ${n(r.recorded)}`) : '', r.totalOnly ? L(`${n(r.totalOnly)} total only`, `合計のみ ${n(r.totalOnly)}`) : '', r.notRecorded ? L(`${n(r.notRecorded)} not recorded`, `記録なし ${n(r.notRecorded)}`) : ''].filter(Boolean).join(', ');
+    if (!r.recorded) return [r.agent, n(r.sessions), usage, NR, NR, NR, NR, NR];
+    return [r.agent, n(r.sessions), usage, tok(r.medianBaseline), pct(r.medianInvisibleShare), tok(r.medianLastSent),
+      r.cache ? `${pct(r.cache.read)} / ${pct(r.cache.write)} / ${pct(r.cache.uncached)}` : NR,
+      r.ttl ? `${pct(r.ttl.write1h)} / ${pct(r.ttl.write5m)}` : NR];
+  });
+  console.log(R.table([L('agent', 'エージェント'), L('sessions', 'セッション'), L('usage', '使用量'), L('before 1st msg', '最初の一言の前'), L('invisible', '不可視'), L('last request', '最終リクエスト'), L('cache R / W / uncached', 'キャッシュ 読 / 書 / 非'), L('write 1h / 5m', '書込 1h / 5m')], tbl,
+    { align: ['l', 'r', 'l', 'r', 'r', 'r', 'r', 'r'] }));
+  console.log(L(`  medians over the sessions that recorded usage: tokens sent before your first message (first request's real total less
+  your message's estimate), invisible share of the latest request, and its size. Cache mix is over every recorded request, as a share of input.`,
+  `  使用量を記録したセッションの中央値: 最初の一言の前に送られたトークン(最初のリクエストの実測 − あなたの一言の概算)、最終リクエストの
+  不可視分の割合、その大きさ。キャッシュの比率は記録のある全リクエストの入力に対する割合。`));
+  console.log(HONEST());
+}
+
+function cmdSends(o) {
+  const scan = (extra) => Readers.sendsAll({ only: o.only, dirs: o.dirs, includeAutomated: o.includeAutomated, archive: o.archive, ...extra });
+  if (o.byAgent) {
+    if (!o.all && !hasPeriod(o)) o.days = 30;
+    const range0 = resolveRange(o, NaN, new Date());
+    // a file untouched since the start holds no session that started after it
+    const found = scan({ sinceMs: o.all ? undefined : range0.from });
+    let first = Infinity;
+    for (const f of found) for (const s of f.sessions) if (s.start != null && s.start < first) first = s.start;
+    const { from, to, label } = resolveRange(o, first, new Date());
+    const rows = Sends.compare(found, from, to);
+    if (o.json) return console.log(JSON.stringify({ from, to, estimate: 'bytes / 4', agents: rows }, null, 2));
+    return printSendsCompare(rows, label);
+  }
+  let found, pick = null;
+  if (o.session) {
+    found = scan({ match: o.session, keepRequests: true });
+    const range = hasPeriod(o) ? resolveRange(o, NaN, new Date()) : { from: -Infinity, to: Infinity };
+    pick = Sends.latest(allSessions(found), range.from, range.to);
+  } else if (hasPeriod(o) || o.all) {
+    const range = o.all ? { from: -Infinity, to: Infinity } : resolveRange(o, NaN, new Date());
+    found = scan({ sinceMs: Number.isFinite(range.from) ? range.from : undefined, keepRequests: true });
+    pick = Sends.latest(allSessions(found), range.from, range.to);
+  } else {
+    // the latest session is almost always recent: look at the last two days first
+    found = scan({ sinceMs: Date.now() - 2 * 86400000, keepRequests: true });
+    pick = Sends.latest(allSessions(found));
+    if (!pick) { found = scan({ keepRequests: true }); pick = Sends.latest(allSessions(found)); }
+  }
+  if (!pick) {
+    if (o.json) return console.log(JSON.stringify(null));
+    console.error(o.session ? L(`no session matching "${o.session}"`, `"${o.session}" に一致するセッションがありません`)
+      : L(`no sessions found — ${NAME} agents shows where it looked`, `セッションが見つかりません — ${NAME} agents で探した場所を確認できます`));
+    process.exit(1);
+  }
+  const a = Sends.analyze(pick);
+  if (o.json) return console.log(JSON.stringify({ ...a, estimate: 'bytes / 4' }, null, 2));
+  printSendsSession(a);
+}
+
 // ---------------------------------------------------------------- main
 
 async function main() {
   const o = parseArgs(process.argv);
   if (o.command === 'leaks') return cmdLeaks(o, Readers.rawAll({ only: o.only, dirs: o.dirs }));
+  // sends reads the text the model drops, through its own pass (readSends)
+  if (o.command === 'sends') return cmdSends(o);
   const found = Readers.readAll({ only: o.only, dirs: o.dirs, includeAutomated: o.includeAutomated, archive: o.archive });
   if (o.command === 'agents') return cmdAgents(o, found);
   if (o.command === 'hours') return cmdHours(o, found);

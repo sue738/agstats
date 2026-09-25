@@ -1,0 +1,36 @@
+{
+  "name": "agentanalytics",
+  "version": "0.0.1",
+  "description": "What your coding agents did, from their own transcripts — Claude Code, Codex CLI, Gemini CLI and more, side by side.",
+  "bin": {
+    "agentanalytics": "bin/agentanalytics.js"
+  },
+  "scripts": {
+    "test": "node test/test.js"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "cursor",
+    "coding-agent",
+    "usage",
+    "hours",
+    "analytics",
+    "transcripts",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "files": [
+    "index.js",
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "author": "sue738",
+  "main": "index.js"
+}

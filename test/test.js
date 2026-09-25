@@ -213,7 +213,7 @@ console.log('== blast metric ==');
   ok('outbound op escapes', c({ op: 'outbound', tool: 'SendMessage' }) === 'escaped');
   ok('write inside a git repo is contained', c({ op: 'write', input: { path: '/repo/a.js' } }) === 'contained');
   ok('write to /tmp is ephemeral', c({ op: 'write', input: { path: '/tmp/x' } }) === 'ephemeral');
-  ok('★ write where nothing tracks it escapes', c({ op: 'write', input: { path: '/home/me/notes.md' } }) === 'escaped');
+  ok('★ write where nothing tracks it escapes', Blast.classifyCall({ op: 'write', input: { path: '/home/me/notes.md' } }, isTracked, () => true).kind === 'escaped');
   ok('plain shell is contained', c({ op: 'shell', input: { command: 'ls -la' } }) === 'contained');
   ok('git push escapes', Blast.classifyCall({ op: 'shell', input: { command: 'git push origin main' } }, isTracked).key === 'push');
   ok('★ force push is read as a history rewrite, not a push', Blast.classifyCall({ op: 'shell', input: { command: 'git push --force origin main' } }, isTracked).key === 'force');
@@ -802,6 +802,20 @@ console.log('== blast matches the command, not text that mentions it ==');
     && k('sudo npm install -g x') === 'install' && k('FOO=1 timeout 60 git push') === 'push' && k('/opt/sdk/bin/gcloud beta run services update s') === 'deploy');
   ok('real infra verbs still count, with any number of subcommand words', k('gcloud run deploy svc --image i') === 'deploy' && k('gcloud iam service-accounts create sa') === 'deploy' && k('kubectl run nginx --image=nginx') === 'deploy');
   ok('curl -D (dump headers) is not --data; -d and -X POST are', k('curl -s -D - https://x') === 'contained' && k('curl -d a=1 https://x') === 'network' && k('curl -X POST https://x') === 'network');
+}
+
+console.log('== blast: a path that is gone is unknown, not escaped ==');
+{
+  // A worktree removed after the session: no .git any more, and no file either.
+  const gone = '/nonexistent-agstats/repo-worktrees/feature/src/a.js';
+  const kept = __filename; // exists; treated as untracked below
+  const s = M.session({ agent: 'x', id: 's', events: [
+    { t: T(0), kind: 'tool_call', tool: 'Write', op: 'write', input: { path: gone } },
+    { t: T(1), kind: 'tool_call', tool: 'Write', op: 'write', input: { path: kept } },
+  ] });
+  const r = Blast.summarize([s], -Infinity, Infinity, { isTracked: () => false });
+  ok('★ a write to a path that no longer exists is not counted as escaped', r.escaped === 1 && r.contained === 1);
+  ok('an untracked file that still exists still escapes', r.categories[0].samples[0].detail === kept);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

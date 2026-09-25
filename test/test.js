@@ -735,6 +735,29 @@ console.log('== day labels are local, like the buckets (TZ=Asia/Tokyo) ==');
   ok('★ TZ: guards add --since 20260920 says and stores the 20th, at local midnight', /since 2026-09-20/.test(added) && g.since.startsWith('2026-09-20') && Date.parse(g.since) === Date.UTC(2026, 8, 19, 15));
 }
 
+console.log('== runtime-written user turns are not prompts ==');
+{
+  const tags = ['<task-notification>\n<status>completed</status>\n</task-notification>', '<bash-input>git status</bash-input>',
+    '<bash-stdout>clean</bash-stdout><bash-stderr></bash-stderr>', '<local-command-stdout>ok</local-command-stdout>', '<command-message>draft</command-message>\n<command-name>/draft</command-name>'];
+  const cbase = path.join(tmp, 'inj', 'claude');
+  writeFile(path.join(cbase, '-p', 'aaaaaaaa-0000-0000-0000-00000000000a.jsonl'), [
+    mk({ type: 'user', timestamp: iso(0), cwd: '/p', entrypoint: 'cli', message: { role: 'user', content: 'please fix the bug' } }),
+    ...tags.map((txt, i) => mk({ type: 'user', timestamp: iso(1 + i), cwd: '/p', entrypoint: 'cli', message: { role: 'user', content: txt } })),
+  ]);
+  const cs = Claude.read({ dir: cbase }).sessions[0];
+  ok('★ claude: task-notification / bash-* / command echoes are not human turns', cs.events.filter((e) => e.human).length === 1);
+  ok('claude: the slash command is still recorded', cs.events.some((e) => e.command === 'draft'));
+  const xbase = path.join(tmp, 'inj', 'codex');
+  const msg = (s, text) => mk({ timestamp: iso(s), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
+  writeFile(path.join(xbase, '2026', '01', '01', 'rollout-2026-01-01T12-00-00-cccccccc-0000-0000-0000-00000000000a.jsonl'), [
+    mk({ timestamp: iso(0), type: 'session_meta', payload: { id: 'cccccccc-0000-0000-0000-00000000000a', cwd: '/p', originator: 'Codex Desktop' } }),
+    msg(1, 'please fix the bug'),
+    ...tags.map((txt, i) => msg(2 + i, txt)),
+  ]);
+  const xs = Codex.read({ dir: xbase }).sessions[0];
+  ok('★ codex: the same runtime tags are injected, not human', xs.events.filter((e) => e.human).length === 1 && xs.events.filter((e) => e.injected).length === tags.length);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

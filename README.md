@@ -29,7 +29,7 @@ every metric unless `--include-automated`.
 
 | command | answers |
 |---|---|
-| `agents` | what was found, where, how far back |
+| `agents` | what was found, where, how far back — and when Claude Code's cleanup deletes the oldest |
 | `hours` | agent-hours per day / month / project; `--card`, `--svg` for a share card |
 | `tools` | which tools fail and how often; `--suggest` clusters the causes |
 | `blast` | actions that escaped git and temp dirs — pushes, publishes, outbound calls |

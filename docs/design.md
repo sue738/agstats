@@ -137,7 +137,7 @@ and the model deliberately keeps none of the text.
 
 | subcommand | port of | v |
 |---|---|---|
-| `agents` | new: what was found, where, how many sessions, date range, automated count | v0 |
+| `agents` | new: what was found, where, how many sessions, date range, automated count; for Claude, cclogsall's diagnose (`cleanupPeriodDays` from settings.json beside projects/, default 30: when the oldest file is deleted, how many within 7 days — only for a directory Claude Code cleans, and only for agents with a documented cleanup); whether a cclogsall archive is being read | v0 |
 | `hours` | cchours (daily / monthly / by-project / card) | v0 |
 | `tools` | cctoolstat (calls, failure rate, failure clusters) + ccflaky (failure kind, guard candidate) | v0 |
 | `blast` | ccblast (escaped vs contained actions) | v0 |

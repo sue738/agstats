@@ -42,7 +42,7 @@ Usage:
   ${NAME} <command> [options]
 
 Commands:
-  agents           which agents were found, where, and how much history each has
+  agents           which agents were found, where, how much history each has, and when Claude Code deletes the oldest
   hours            agent-hours: daily table (default), --monthly, --by-project, --card
   tools            tool calls and failure rate per tool; --suggest clusters the failures
   blast            what cannot be undone: escaped vs contained actions; --list shows examples
@@ -242,6 +242,7 @@ function foundAgents(found) {
 function cmdAgents(o, found) {
   const rows = [];
   const out = [];
+  const keep = Readers.retentionAll({ only: o.only, dirs: o.dirs });
   for (const f of found) {
     let first = Infinity, last = 0, events = 0, subs = 0;
     for (const s of f.sessions) {
@@ -257,6 +258,9 @@ function cmdAgents(o, found) {
       error: f.error || null,
     };
     if (f.agent === 'claude') rec.archive = archiveInfo(o, f);
+    // only an agent with a documented cleanup gets the key at all: absent
+    // means "no schedule to report", never "nothing expires"
+    if (f.agent in keep) rec.retention = keep[f.agent];
     out.push(rec);
     rows.push([
       f.agent,
@@ -275,6 +279,21 @@ function cmdAgents(o, found) {
   if (out.some((r) => r.automated)) {
     console.log(L('  "automated" = written by a program (an a2a server, a cron job), not a person. Left out of every metric unless --include-automated.',
       '  「自動実行」= 人ではなくプログラム(a2a サーバー・cron)が書いたもの。--include-automated を付けない限りどの指標にも入れない。'));
+  }
+  for (const r of out) {
+    const k = r.retention;
+    if (!k) continue;
+    const setting = `cleanupPeriodDays=${k.periodDays}${k.source === 'default' ? L(' (default)', '(既定値)') : ''}`;
+    if (k.longRetention) {
+      console.log(L(`  ${r.agent}: ${setting} — the oldest session (${k.oldest}) is kept until ${k.deletesOn}`,
+        `  ${r.agent}: ${setting} — 最古のセッション(${k.oldest})は ${k.deletesOn} まで残ります`));
+    } else if (k.expiresInDays <= 0) {
+      console.log(L(`  ⚠ ${r.agent}: ${setting} — the oldest sessions are past the limit and go at the next Claude Code startup; ${n(k.expiringWithin7d)} session(s) expire within 7 days`,
+        `  ⚠ ${r.agent}: ${setting} — 最古のセッションは保持期限切れで、次回の Claude Code 起動時に削除されます。7日以内に ${n(k.expiringWithin7d)} 件が期限切れ`));
+    } else {
+      console.log(L(`  ⚠ ${r.agent}: ${setting} — the oldest session (${k.oldest}) is deleted in ${k.expiresInDays} day(s), on ${k.deletesOn}; ${n(k.expiringWithin7d)} session(s) expire within 7 days`,
+        `  ⚠ ${r.agent}: ${setting} — 最古のセッション(${k.oldest})はあと${k.expiresInDays}日、${k.deletesOn} に削除されます。7日以内に ${n(k.expiringWithin7d)} 件が期限切れ`));
+    }
   }
   const ar = (out.find((r) => r.agent === 'claude') || {}).archive;
   if (ar && ar.read) {

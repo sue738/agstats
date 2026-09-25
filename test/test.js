@@ -1014,6 +1014,40 @@ console.log('== cclogsall archive (--archive) ==');
   ok('the archive is read, never written', fs.readdirSync(path.join(arch, 'projects', '-p')).length === 4 && fs.readFileSync(path.join(arch, 'manifest.json'), 'utf8') === '{"version":1,"entries":{}}');
 }
 
+console.log('== retention: when Claude Code deletes what is here (cclogsall diagnose) ==');
+{
+  const home = path.join(tmp, 'ret', 'home');
+  const projects = path.join(home, 'projects');
+  const now = Date.now(), day = 86400000;
+  const put = (rel, ageDays) => { const f = path.join(projects, rel); writeFile(f, [mk({ type: 'user', timestamp: new Date(now - ageDays * day).toISOString(), message: { content: 'x' } })]); const t = (now - ageDays * day) / 1000; fs.utimesSync(f, t, t); };
+  put('-p/a.jsonl', 28.5); put('-p/b.jsonl', 25); put('-p/b/subagents/agent-1.jsonl', 24); put('-p/c.jsonl', 1);
+  fs.writeFileSync(path.join(home, 'settings.json'), '{"theme":"dark"}');
+  const r = Claude.retention({ dir: projects, now });
+  ok('★ default 30 days when settings.json does not set it', r.periodDays === 30 && r.source === 'default');
+  ok('★ oldest (28.5 days old) is deleted in 1 day', r.expiresInDays === 1 && r.oldest === M.dayKey(now - 28.5 * day) && r.deletesOn === M.dayKey(now - 28.5 * day + 30 * day));
+  ok('★ 3 files (subagent included) expire within 7 days, the fresh one does not', r.expiringWithin7d === 3 && r.sessions === 4);
+  fs.writeFileSync(path.join(home, 'settings.json'), '{"cleanupPeriodDays":10}');
+  const past = Claude.retention({ dir: projects, now });
+  ok('cleanupPeriodDays from settings.json; past the limit reads as ≤ 0', past.periodDays === 10 && past.source === 'settings' && past.expiresInDays <= 0 && past.expiringWithin7d === 3);
+  fs.writeFileSync(path.join(home, 'settings.json'), '{"cleanupPeriodDays":3650}');
+  ok('long retention is flagged', Claude.retention({ dir: projects, now }).longRetention === true);
+  fs.writeFileSync(path.join(home, 'settings.json'), '{not json');
+  ok('unreadable settings.json falls back to the default, as cclogsall does', Claude.retention({ dir: projects, now }).periodDays === 30);
+  ok('★ a copy with no settings.json beside it gets no deadline (Claude Code never cleans it)', Claude.retention({ dir: path.join(tmp, 'claude'), now }) === null);
+
+  fs.writeFileSync(path.join(home, 'settings.json'), '{}');
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const dirArgs = ['--dir', `claude=${projects}`, '--dir', `codex=${path.join(tmp, 'codex')}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`];
+  const run = (args) => execFileSync('node', [bin, ...args, ...dirArgs], { encoding: 'utf8' });
+  const js = JSON.parse(run(['agents', '--json']));
+  const c = js.find((x) => x.agent === 'claude');
+  ok('★ agents --json carries the claude retention', c.retention && c.retention.periodDays === 30 && c.retention.expiresInDays === 1 && c.retention.expiringWithin7d === 3);
+  ok('★ agents without a documented cleanup carry no retention key at all', !('retention' in js.find((x) => x.agent === 'codex')) && !('retention' in js.find((x) => x.agent === 'gemini')));
+  const txt = run(['agents']);
+  ok('agents text: when the oldest goes and how many within 7 days', /cleanupPeriodDays=30 \(default\) — the oldest session \(\S+\) is deleted in 1 day\(s\), on \S+; 3 session\(s\) expire within 7 days/.test(txt));
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

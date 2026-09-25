@@ -791,6 +791,7 @@ function cmdGuards(o, found) {
     return console.log(L(`✅ guard registered: ${o.arg} since ${M.dayKey(Date.parse(since))}  (${Guards.confPath()})`, `✅ ガードを登録: ${o.arg} ${M.dayKey(Date.parse(since))} 以降  (${Guards.confPath()})`));
   }
   if (o.sub === 'rm') {
+    if (!o.arg) usageError(L('guards rm <tool>', 'guards rm <ツール名>'));
     const before = guards.length;
     guards = guards.filter((g) => g.tool !== o.arg);
     Guards.writeGuards(guards);
@@ -805,7 +806,7 @@ function cmdGuards(o, found) {
     `${ICON[r.verdict]} ${r.tool}${r.signature ? ` [${r.signature.slice(0, 20)}]` : ''}`, M.dayKey(Date.parse(r.since)),
     `${n(r.rates.before.errors)}/${n(r.rates.before.calls)}${r.rates.before.rate != null ? ` (${r.rates.before.rate.toFixed(1)}%)` : ''}`,
     `${n(r.rates.after.errors)}/${n(r.rates.after.calls)}${r.rates.after.rate != null ? ` (${r.rates.after.rate.toFixed(1)}%)` : ''}`,
-    r.verdict, r.note,
+    r.verdict, r.reason + (r.note ? `  · ${L('note', 'メモ')}: ${r.note}` : ''),
   ]);
   console.log(R.table([L('guard', 'ガード'), L('since', '投入日'), L('before', '前'), L('after', '後'), L('verdict', '判定'), ''], rows, { align: ['l', 'l', 'r', 'r', 'l', 'l'] }));
   console.log(L('  calls are shown beside rates so "fewer failures because fewer calls" cannot pass as success; fewer than 20 calls since = not yet', '  呼出数を率の横に出すのは「呼ばなくなったから減った」を成功と読まないため。投入後20件未満は「まだ言えない」'));

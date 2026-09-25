@@ -880,6 +880,21 @@ console.log('== hours --svg ==');
   ok('★ --svg with --json writes the file and prints JSON', both.code === 0 && fs.existsSync(path.join(cwd, 'x.svg')) && JSON.parse(both.out).svg === 'x.svg');
 }
 
+console.log('== guards keep the user note; rm needs a tool ==');
+{
+  const G = require('../lib/metrics/guards.js');
+  const s = M.session({ agent: 'claude', id: 'g', events: [{ t: T(0), kind: 'tool_call', tool: 'Bash', callId: 'a' }] });
+  const r = G.evaluate([{ tool: 'Bash', since: iso(10), note: 'added a PreToolUse hook' }], [s])[0];
+  ok('★ evaluate keeps the registered note and puts the verdict text in its own field', r.note === 'added a PreToolUse hook' && /call/.test(r.reason));
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const file = path.join(tmp, 'guards-rm.json');
+  fs.writeFileSync(file, JSON.stringify([{ tool: 'Bash', since: iso(0) }]));
+  const before = fs.readFileSync(file, 'utf8');
+  let code = 0, out = '';
+  try { out = execFileSync('node', [bin, 'guards', 'rm', '--dir', `claude=${path.join(tmp, 'nope')}`], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, AGSTATS_GUARDS: file } }); } catch (e) { code = e.status; out = e.stdout; }
+  ok('★ guards rm without a tool exits 2, prints no "for null", and leaves the file alone', code === 2 && !/null/.test(out) && fs.readFileSync(file, 'utf8') === before);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

@@ -230,7 +230,8 @@ function cmdAgents(o, found) {
 function cmdHours(o, found) {
   const sessions = allSessions(found);
   const agents = H.fromSessions(sessions, o.idleGapS || H.IDLE_GAP_S);
-  if (!agents.length) {
+  // --json always answers in JSON: the empty result, not a sentence.
+  if (!agents.length && !o.json) {
     console.log(L('(no transcripts with measurable activity found — try `agents` to see what was detected)',
       '(計測できる転記がありません — `agents` で検出状況を確認してください)'));
     return;
@@ -267,11 +268,14 @@ function cmdHours(o, found) {
 
   if (o.caps) {
     const rows = [];
+    const caps = [];
     for (const cap of [30, 60, 120, 300, 600, 900]) {
       const ag = H.fromSessions(sessions, cap);
       const s = H.summarize(ag, from, to);
+      caps.push({ idleCapS: cap, agentHours: s.agentHours, wallHours: s.wallHours, parallelism: s.parallelism });
       rows.push([`${cap}s`, R.fmtH(s.agentHours), R.fmtH(s.wallHours), `×${s.parallelism.toFixed(1)}`]);
     }
+    if (o.json) return console.log(JSON.stringify({ from, to, caps }, null, 2));
     console.log(R.banner(L(`${NAME} hours — idle-cap band (${label})`, `${NAME} hours — 上限別の稼働時間 (${label})`)));
     console.log(R.table([L('idle cap', '停止とみなす沈黙'), L('agent-hrs', '延べ稼働'), L('wall', '実経過'), L('parallel', '並列')], rows));
     console.log(scopeLine);
@@ -570,7 +574,7 @@ function cmdTimeline(o, found) {
   const sessions = allSessions(found);
   const weeks = o.weeks || 26;
   const samples = Timeline.samplesOf(sessions);
-  if (!samples.length) return console.log(L('(no records yet)', '(まだ記録がありません)'));
+  if (!samples.length && !o.json) return console.log(L('(no records yet)', '(まだ記録がありません)'));
   const days = Timeline.byDay(samples);
   const cal = Timeline.calendar(days, null, weeks);
   const st = Timeline.streaks(days);
@@ -743,7 +747,7 @@ function cmdGuards(o, found) {
     Guards.writeGuards(guards);
     return console.log(L(`removed ${before - guards.length} guard(s) for ${o.arg}`, `${o.arg} のガード ${before - guards.length} 件を削除`));
   }
-  if (!guards.length) return console.log(L(`(no guards registered — after installing a hook or a rule: ${NAME} guards add <tool> --note "what you did")`, `(ガードの登録なし — hook や規則を入れたら: ${NAME} guards add <ツール名> --note "何をしたか")`));
+  if (!guards.length && !o.json) return console.log(L(`(no guards registered — after installing a hook or a rule: ${NAME} guards add <tool> --note "what you did")`, `(ガードの登録なし — hook や規則を入れたら: ${NAME} guards add <ツール名> --note "何をしたか")`));
   const results = Guards.evaluate(guards, allSessions(found));
   if (o.json) return console.log(JSON.stringify(results, null, 2));
   const ICON = { fixed: '✅', improved: '🟢', unchanged: '🟡', worse: '🔴', insufficient: '⏳', 'no-baseline': '⚪' };

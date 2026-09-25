@@ -758,6 +758,18 @@ console.log('== runtime-written user turns are not prompts ==');
   ok('★ codex: the same runtime tags are injected, not human', xs.events.filter((e) => e.human).length === 1 && xs.events.filter((e) => e.injected).length === tags.length);
 }
 
+console.log('== --json with nothing to report is still JSON ==');
+{
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const env = { ...process.env, AGSTATS_GUARDS: path.join(tmp, 'empty-guards.json') };
+  const dirArgs = ['--dir', `claude=${nope}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`];
+  const isJson = (args) => { try { JSON.parse(execFileSync('node', [bin, ...args, '--json', ...dirArgs], { encoding: 'utf8', env })); return true; } catch (e) { return false; } };
+  for (const args of [['hours'], ['hours', '--card'], ['hours', '--monthly'], ['hours', '--by-project'], ['hours', '--caps'], ['timeline'], ['guards']]) {
+    ok(`★ empty data: ${args.join(' ')} --json parses as JSON`, isJson(args));
+  }
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

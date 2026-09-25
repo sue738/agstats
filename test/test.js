@@ -457,7 +457,7 @@ console.log('== diff metric ==');
   const D = require('../lib/metrics/diff.js');
   const s = M.session({ agent: 'claude', id: 'd1', project: '/repo', events: [
     { t: T(0), kind: 'tool_call', tool: 'Write', callId: 'w1', op: 'write', input: { path: '/repo/a.js' } },
-    { t: T(1), kind: 'tool_result', callId: 'w1', ok: true, lines: { added: 10, removed: 0 } },
+    { t: T(1), kind: 'tool_result', callId: 'w1', ok: true, created: true, lines: { added: 10, removed: 0 } },
     { t: T(2), kind: 'tool_call', tool: 'Edit', callId: 'e1', op: 'write', input: { path: '/repo/a.js' } },
     { t: T(3), kind: 'tool_result', callId: 'e1', ok: true, lines: { added: 2, removed: 6 } },
     { t: T(4), kind: 'tool_call', tool: 'Bash', callId: 'b1', op: 'shell', input: { command: 'npm   test' } },
@@ -893,6 +893,33 @@ console.log('== guards keep the user note; rm needs a tool ==');
   let code = 0, out = '';
   try { out = execFileSync('node', [bin, 'guards', 'rm', '--dir', `claude=${path.join(tmp, 'nope')}`], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, AGSTATS_GUARDS: file } }); } catch (e) { code = e.status; out = e.stdout; }
   ok('★ guards rm without a tool exits 2, prints no "for null", and leaves the file alone', code === 2 && !/null/.test(out) && fs.readFileSync(file, 'utf8') === before);
+}
+
+console.log('== diff: "new" needs evidence, self-undo cannot pass 100% ==');
+{
+  const D = require('../lib/metrics/diff.js');
+  // A Write over an existing 200-line file with 5 lines, then an edit: the
+  // 200 removed lines were never this session's.
+  const s = M.session({ agent: 'claude', id: 'd2', project: '/repo', events: [
+    { t: T(0), kind: 'tool_call', tool: 'Write', callId: 'w', op: 'write', input: { path: '/repo/old.js' } },
+    { t: T(1), kind: 'tool_result', callId: 'w', ok: true, lines: { added: 5, removed: 200 } },
+    { t: T(2), kind: 'tool_call', tool: 'Write', callId: 'n', op: 'write', input: { path: '/repo/new.js' } },
+    { t: T(3), kind: 'tool_result', callId: 'n', ok: true, created: true, lines: { added: 10, removed: 0 } },
+    { t: T(4), kind: 'tool_call', tool: 'Edit', callId: 'e', op: 'write', input: { path: '/repo/new.js' } },
+    { t: T(5), kind: 'tool_result', callId: 'e', ok: true, lines: { added: 1, removed: 4 } },
+  ] });
+  const r = D.collectChanges(s);
+  ok('★ a Write with no creation evidence is not "new"', r.files.find((f) => f.path === '/repo/old.js').created === false);
+  ok('a Write the result calls a create is new', r.files.find((f) => f.path === '/repo/new.js').created === true);
+  ok('★ self-undo counts only removals from files it created, never over 100%', Math.abs(r.lines.selfUndo - 4 / 16) < 1e-9);
+  const base = path.join(tmp, 'diff-claude');
+  writeFile(path.join(base, '-repo', 'dddddddd-0000-0000-0000-000000000001.jsonl'), [
+    mk({ type: 'assistant', timestamp: iso(0), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'w1', name: 'Write', input: { file_path: '/repo/a.js' } }, { type: 'tool_use', id: 'w2', name: 'Write', input: { file_path: '/repo/b.js' } }] } }),
+    mk({ type: 'user', timestamp: iso(1), toolUseResult: { type: 'create', filePath: '/repo/a.js', structuredPatch: [] }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'w1' }] } }),
+    mk({ type: 'user', timestamp: iso(2), toolUseResult: { type: 'update', filePath: '/repo/b.js', structuredPatch: [] }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'w2' }] } }),
+  ]);
+  const res = Claude.read({ dir: base }).sessions[0].events.filter((e) => e.kind === 'tool_result');
+  ok('claude reader: Write result type create → created, update → not', res.find((e) => e.callId === 'w1').created === true && !res.find((e) => e.callId === 'w2').created);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

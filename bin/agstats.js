@@ -709,7 +709,7 @@ function cmdDiff(o, found) {
     console.log(`  ${kind}  ${rel}` + (c.touches > 1 ? `  (${c.touches}×)` : '') + churn);
   }
   console.log(`\n${files.length} files · ${commands.length} commands` + (lines.added ? ` · +${lines.added} −${lines.removed} ${L('lines', '行')}` : ''));
-  if (lines.added && lines.selfUndo >= 0.25) console.log(L(`  ${(lines.selfUndo * 100).toFixed(0)}% of the lines it wrote, it removed again — before any commit, so git never sees it`, `  書いた行の ${(lines.selfUndo * 100).toFixed(0)}% を自分で消しています(コミット前なので git には残りません)`));
+  if (lines.added && lines.selfUndo >= 0.25) console.log(L(`  ${(lines.selfUndo * 100).toFixed(0)}% of the lines it wrote, it removed again from files it created — before any commit, so git never sees it`, `  書いた行の ${(lines.selfUndo * 100).toFixed(0)}% を、自分で作ったファイルから自分で消しています(コミット前なので git には残りません)`));
   if (o.commands && commands.length) {
     console.log(L('\n--- commands ---', '\n--- 実行したコマンド ---'));
     for (const c of commands.slice(0, 40)) console.log(`  $ ${c.command.slice(0, 110)}`);

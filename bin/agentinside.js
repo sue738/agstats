@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * agentanalytics — what your coding agents did, from their own transcripts.
+ * agentinside — what your coding agents did, from their own transcripts.
  *
- *   agentanalytics agents            which agents were found, where, how much history
- *   agentanalytics hours             agent-hours per day, every agent side by side
- *   agentanalytics tools             which tools fail, and how often
- *   agentanalytics blast             what cannot be undone
- *   agentanalytics leaks             what secrets sit in plaintext (leaks scrub: redact them)
+ *   agentinside agents            which agents were found, where, how much history
+ *   agentinside hours             agent-hours per day, every agent side by side
+ *   agentinside tools             which tools fail, and how often
+ *   agentinside blast             what cannot be undone
+ *   agentinside leaks             what secrets sit in plaintext (leaks scrub: redact them)
  */
 'use strict';
 

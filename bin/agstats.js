@@ -195,6 +195,18 @@ function short(p) {
   return base.slice(0, 28);
 }
 
+/**
+ * Names clipped in the middle to `w` columns, keeping both ends: tool names
+ * share long prefixes (mcp__claude-in-chrome__…) and differ at the end, so
+ * cutting the tail printed distinct tools as identical rows. If clipping
+ * would still merge two names, they are shown in full.
+ */
+function clipNames(names, w = 36) {
+  const clip = (s) => (s.length <= w ? s : s.slice(0, Math.ceil((w - 1) / 2)) + '…' + s.slice(s.length - Math.floor((w - 1) / 2)));
+  const out = names.map(clip);
+  return new Set(out).size === new Set(names).size ? out : names;
+}
+
 function allSessions(found) {
   const out = [];
   for (const f of found) out.push(...f.sessions);
@@ -398,9 +410,11 @@ function cmdTools(o, found) {
   if (!s.total) return console.log(L('(no tool calls in this window)', '(この期間にツール呼び出しはありません)'));
   console.log(R.banner(L(`${NAME} tools — ${n(s.total)} calls, ${s.errorRate}% error (${label})`, `${NAME} tools — ${n(s.total)} 回, エラー ${s.errorRate}% (${label})`)));
   const max = s.rows[0].calls;
-  const rows = s.rows.slice(0, 30).map((r) => [
+  const shown = s.rows.slice(0, 30);
+  const names = clipNames(shown.map((r) => r.tool));
+  const rows = shown.map((r, i) => [
     ...(multi ? [r.agent] : []),
-    r.tool.slice(0, 28), n(r.calls), Tools.bar(r.calls, max, 20),
+    names[i], n(r.calls), Tools.bar(r.calls, max, 20),
     r.errors ? `⚠ ${n(r.errors)} (${r.errorRate}%)` : '',
   ]);
   console.log(R.table([...(multi ? [L('agent', 'エージェント')] : []), L('tool', 'ツール'), L('calls', '呼び出し'), '', L('errors', 'エラー')], rows,
@@ -749,7 +763,8 @@ function cmdSkills(o, found) {
   if (!skills.length) return console.log(L('(no skill invocations recorded — only Claude Code records them today)', '(スキルの起動記録なし — 現状 Claude Code だけが記録します)'));
   const age = (ms) => { const d = Math.round((Date.now() - ms) / 86400000); return d <= 0 ? L('today', '今日') : `${d}d`; };
   const max = skills[0].total;
-  const tbl = skills.slice(0, 30).map((r) => [r.name.slice(0, 28), n(r.total), n(r.tool), n(r.typed), n(r.auto), n(r.interactive), n(r.headless + r.ci), Tools.bar(r.total, max, 12), r.lastMs ? age(r.lastMs) : '']);
+  const skillNames = clipNames(skills.slice(0, 30).map((r) => r.name));
+  const tbl = skills.slice(0, 30).map((r, i) => [skillNames[i], n(r.total), n(r.tool), n(r.typed), n(r.auto), n(r.interactive), n(r.headless + r.ci), Tools.bar(r.total, max, 12), r.lastMs ? age(r.lastMs) : '']);
   console.log(R.banner(L(`${NAME} skills — ${label}`, `${NAME} skills — ${label}`)));
   console.log(R.table([L('skill', 'スキル'), L('runs', '回'), 'tool', 'typed', 'auto', L('interactive', '対話'), L('scheduled', '自動'), '', L('last', '最終')], tbl, { align: ['l', 'r', 'r', 'r', 'r', 'r', 'r', 'l', 'r'] }));
   console.log(L(`  tool = the description matched · typed = you knew the name · auto = the runtime ran it (once per session)`, `  tool = description が合致 · typed = 名前を打った · auto = 自動発火(セッションごとに1回)`));

@@ -922,6 +922,20 @@ console.log('== diff: "new" needs evidence, self-undo cannot pass 100% ==');
   ok('claude reader: Write result type create → created, update → not', res.find((e) => e.callId === 'w1').created === true && !res.find((e) => e.callId === 'w2').created);
 }
 
+console.log('== tools: long names stay distinct ==');
+{
+  const a = 'mcp__claude-in-chrome__tabs_context_mcp', b = 'mcp__claude-in-chrome__tabs_create_mcp';
+  const base = path.join(tmp, 'longnames', 'claude');
+  writeFile(path.join(base, '-p', 'eeeeeeee-0000-0000-0000-000000000001.jsonl'), [
+    mk({ type: 'assistant', timestamp: iso(0), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'x1', name: a, input: {} }, { type: 'tool_use', id: 'x2', name: b, input: {} }] } }),
+  ]);
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const out = execFileSync('node', [bin, 'tools', '--all', '--dir', `claude=${base}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`], { encoding: 'utf8' });
+  const rows = out.split('\n').filter((l) => l.includes('mcp__')).map((l) => l.split('│')[1].trim());
+  ok('★ two tools sharing a long prefix print as two different names', rows.length === 2 && rows[0] !== rows[1]);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

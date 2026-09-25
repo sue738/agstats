@@ -46,7 +46,8 @@ every metric unless `--include-automated`.
 | `guards` | whether a hook you added stopped the failure — before vs after |
 
 Every command takes `--json`, and a period: `--today`, `--week`, `--month`,
-`--days N`, `--all`, `--since YYYYMMDD`, `--until YYYYMMDD`.
+`--days N`, `--all`, `--since YYYYMMDD`, `--until YYYYMMDD` (`leaks` picks files
+by modification time, so it takes a start but refuses `--until`).
 `--dir claude=/some/copy` reads a copy instead of the live directory.
 
 ## How hours are measured

@@ -65,7 +65,8 @@ Scope:
 
 Period:
   --today | --week | --month | --days N | --all | --since YYYYMMDD | --until YYYYMMDD
-  (hours/tools default to everything on disk; blast defaults to the last 30 days)
+  (hours/tools default to everything on disk; blast defaults to the last 30 days;
+   leaks selects files by modification time, so it takes a start but not --until)
 
 Output:
   --json           machine-readable
@@ -150,7 +151,10 @@ function parseArgs(argv) {
       process.exit(2);
     }
   }
-  if (o.days != null && !(Number.isFinite(o.days) && o.days > 0)) { console.error(L('--days: expected a positive number', '--days: 正の数で指定してください')); process.exit(2); }
+  for (const [k, flag] of [['days', '--days'], ['weeks', '--weeks'], ['window', '--window'], ['idleGapS', '--idle-gap']]) {
+    if (o[k] != null && !(Number.isFinite(o[k]) && o[k] > 0)) usageError(L(`${flag}: expected a positive number`, `${flag}: 正の数で指定してください`));
+  }
+  if (o.since && o.until && parseDate(o.since) > parseDate(o.until)) usageError(L(`--since ${o.since} is after --until ${o.until}`, `--since ${o.since} が --until ${o.until} より後です`));
   return o;
 }
 
@@ -164,6 +168,9 @@ function parseDate(s) {
   if (d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3]) return null; // 2026-02-30
   return d.getTime();
 }
+
+/** True when the user asked for a period (not just the command's default). */
+function hasPeriod(o) { return !!(o.since || o.until || o.days || o.today || o.thisMonth); }
 
 /** Resolve the requested window (same rules as cchours). `firstMs` = oldest activity on disk. */
 function resolveRange(o, firstMs, now) {
@@ -458,7 +465,7 @@ function confirm(question) {
   return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(/^y(es)?$/i.test(a.trim())); }));
 }
 
-async function cmdLeaksScrub(o, sources) {
+async function cmdLeaksScrub(o, sources, sinceMs) {
   const eligible = sources.filter((s) => s.scrubbable);
   const skippedDb = sources.length - eligible.length;
   const plan = [];
@@ -467,7 +474,7 @@ async function cmdLeaksScrub(o, sources) {
   for (const s of eligible) {
     let mtimeMs;
     try { mtimeMs = fs.statSync(s.file).mtimeMs; } catch (e) { continue; }
-    if (o.days && mtimeMs < Date.now() - o.days * 86400000) continue;
+    if (sinceMs != null && mtimeMs < sinceMs) continue;
     if (Leaks.isActive(mtimeMs)) { skipped.push(s); continue; }
     let content;
     try { content = fs.readFileSync(s.file, 'utf8'); } catch (e) { continue; }
@@ -507,9 +514,21 @@ async function cmdLeaksScrub(o, sources) {
   process.exit(residual === 0 ? 0 : 1);
 }
 
+/**
+ * Leaks reads whole files, so a period can only be a modification-time
+ * cutoff: a file untouched since the start holds nothing newer. An end date
+ * cannot be honoured that way (a file touched later still holds older
+ * lines), so --until is refused rather than silently ignored.
+ */
+function leaksSince(o) {
+  if (o.until) usageError(L('leaks: --until is not supported — files are selected by modification time, so only a start (--since, --days, --week, --month, --today) can be honoured', 'leaks: --until は使えません — ファイルを更新時刻で選ぶため、開始側(--since, --days, --week, --month, --today)しか守れません'));
+  return hasPeriod(o) ? resolveRange(o, NaN, new Date()).from : null;
+}
+
 async function cmdLeaks(o, sources) {
-  if (o.sub === 'scrub') return cmdLeaksScrub(o, sources);
-  const r = Leaks.scan(sources, { days: o.days });
+  const sinceMs = leaksSince(o);
+  if (o.sub === 'scrub') return cmdLeaksScrub(o, sources, sinceMs);
+  const r = Leaks.scan(sources, { sinceMs });
   // exit 1 means findings, so a source that could not be read must not share
   // it: 3 = nothing found, but the scan was incomplete.
   const code = r.findings.length ? 1 : r.unreadable.length ? 3 : 0;
@@ -583,20 +602,25 @@ function cmdStats(o, found) {
 function cmdTimeline(o, found) {
   const sessions = allSessions(found);
   const weeks = o.weeks || 26;
-  const samples = Timeline.samplesOf(sessions);
+  // A period narrows the samples, and --until also moves the calendar's
+  // right edge (and the day "current streak" counts back from).
+  const range = hasPeriod(o) ? resolveRange(o, firstEventMs(sessions), new Date()) : null;
+  const endKey = o.until ? M.dayKey(range.to - 1) : null;
+  const samples = range ? Timeline.samplesOf(sessions, range.from, range.to) : Timeline.samplesOf(sessions);
   if (!samples.length && !o.json) return console.log(L('(no records yet)', '(まだ記録がありません)'));
   const days = Timeline.byDay(samples);
-  const cal = Timeline.calendar(days, null, weeks);
-  const st = Timeline.streaks(days);
+  const cal = Timeline.calendar(days, endKey, weeks);
+  const st = Timeline.streaks(days, endKey);
   const totalTokens = samples.reduce((a, s) => a + s.tokens, 0);
   if (o.json) {
     return console.log(JSON.stringify({
+      ...(range ? { from: range.from, to: range.to } : {}),
       days: [...days.entries()].map(([d, v]) => ({ day: d, tokens: v.tokens, stamps: v.stamps, sessions: v.sessions.size })),
       streaks: st, totalTokens, activeDays: days.size,
     }, null, 2));
   }
   const DOW = JA ? ['日', '月', '火', '水', '木', '金', '土'] : ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-  console.log(L(`📅 last ${weeks} weeks\n`, `📅 直近${weeks}週\n`));
+  console.log(range ? L(`📅 ${range.label} · ${weeks} weeks shown\n`, `📅 ${range.label} · ${weeks}週を表示\n`) : L(`📅 last ${weeks} weeks\n`, `📅 直近${weeks}週\n`));
   console.log('    ' + Timeline.monthAxis(cal.start, weeks));
   cal.grid.forEach((line, i) => console.log(`${DOW[i].padEnd(3)} ${line}`));
   console.log(`    ${Timeline.HEAT.join(' ')}  ${L('less → more', '少 → 多')}`);

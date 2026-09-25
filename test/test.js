@@ -829,6 +829,39 @@ console.log('== leaks: scan and scrub agree on secrets after an escaped newline 
   ok('★ scan and scrub report the same secrets', scanned.map((x) => x.rule).sort().join() === scrubbed.map((x) => x.ruleId).sort().join());
 }
 
+console.log('== period flags are honoured or refused, never ignored ==');
+{
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  // two sessions on two local days: 2026-03-01 and 2026-03-10
+  const base = path.join(tmp, 'period', 'claude');
+  const at = (d, s) => new Date(2026, 2, d, 12, 0, s).toISOString();
+  for (const d of [1, 10]) {
+    writeFile(path.join(base, '-p', `aaaaaaaa-0000-0000-0000-0000000000${String(d).padStart(2, '0')}.jsonl`), [
+      mk({ type: 'user', timestamp: at(d, 0), cwd: '/p', message: { role: 'user', content: 'go' } }),
+      mk({ type: 'assistant', timestamp: at(d, 5), message: { role: 'assistant', content: [] } }),
+    ]);
+  }
+  const dirArgs = ['--dir', `claude=${base}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`];
+  const run = (args) => { try { return { code: 0, out: execFileSync('node', [bin, ...args, ...dirArgs], { encoding: 'utf8', stdio: 'pipe' }) }; } catch (e) { return { code: e.status, out: e.stdout }; } };
+  const days = (args) => JSON.parse(run(['timeline', '--json', ...args]).out).days.map((d) => d.day).join();
+  ok('★ timeline --since leaves out earlier days', days(['--since', '20260305']) === '2026-03-10');
+  ok('★ timeline --until leaves out later days', days(['--until', '20260305']) === '2026-03-01');
+  ok('timeline without a period still shows everything', days([]) === '2026-03-01,2026-03-10');
+  ok('★ --since after --until exits 2', run(['hours', '--since', '20260310', '--until', '20260301']).code === 2);
+  ok('★ negative --weeks / --window / --idle-gap exit 2', run(['timeline', '--weeks', '-3']).code === 2 && run(['overlap', '--window', '-1']).code === 2 && run(['hours', '--idle-gap', '-5']).code === 2);
+  // leaks: a file last modified long ago is outside --since; --until cannot be honoured per file
+  const lk = path.join(tmp, 'period-leaks', 'claude');
+  const old = path.join(lk, '-p', 'bbbbbbbb-0000-0000-0000-000000000001.jsonl');
+  writeFile(old, [mk({ type: 'user', message: { content: 'ghp_' + 'D'.repeat(36) } })]);
+  const past = new Date(2026, 0, 1).getTime() / 1000;
+  fs.utimesSync(old, past, past);
+  const lkArgs = ['--dir', `claude=${lk}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`];
+  const lcode = (args) => { try { execFileSync('node', [bin, 'leaks', ...args, ...lkArgs], { stdio: 'pipe' }); return 0; } catch (e) { return e.status; } };
+  ok('★ leaks --since skips files untouched since then', lcode(['--since', '20260201']) === 0 && lcode(['--since', '20251201']) === 1);
+  ok('★ leaks --until is refused (exit 2), not ignored', lcode(['--until', '20260201']) === 2);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

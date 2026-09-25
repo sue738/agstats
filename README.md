@@ -49,6 +49,8 @@ Every command takes `--json`, and a period: `--today`, `--week`, `--month`,
 `--days N`, `--all`, `--since YYYYMMDD`, `--until YYYYMMDD` (`leaks` picks files
 by modification time, so it takes a start but refuses `--until`).
 `--dir claude=/some/copy` reads a copy instead of the live directory.
+`--archive [dir]` also reads a [cclogsall](https://github.com/sue738/cclogsall) backup of Claude Code
+sessions (default `~/.cclogsall`), so metrics reach past the cleanup; a session still live is read from there.
 
 ## How hours are measured
 
@@ -61,7 +63,7 @@ up; wall-clock time is shown beside them.
 
 - The only writes are `hours --svg`, `quota --set`/`--clear` and `guards add`/`rm`
   (under `~/.agstats/`), and `leaks scrub`, which asks first and keeps a backup.
-- History is only as long as each agent keeps it (Claude Code: 30 days by default).
+- History is only as long as each agent keeps it (Claude Code: 30 days by default — `agents` says when the next deletion is due, and `--archive` reads past it).
 - `attention` flags are regex heuristics (English and Japanese) — read them as a trend.
 
 ## As a library

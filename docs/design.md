@@ -86,6 +86,16 @@ how cchours already treats non user/assistant lines.
 | antigravity | `~/.gemini/antigravity/conversations/*.pb` | protobuf, schema unknown | not yet — needs the schema |
 | zed | `~/Library/Application Support/Zed/threads/threads.db` | SQLite, `threads.data` blob | not yet — no sample data |
 
+Archived Claude sessions (`--archive [dir]`, opt-in): cclogsall mirrors
+`~/.claude/projects` as `<out>/projects/<same path>.jsonl.gz` (default
+`~/.cclogsall`, or `$CCLOGSALL_OUT`). The Claude reader gunzips those (node:zlib)
+and parses them exactly like live files, flagged `archived`. De-duplicated by
+session id against the live directory — the whole live listing, not the
+period's — and live wins, so the archive only adds what the cleanup deleted.
+A missing archive under `--archive` is a usage error, not an empty result;
+`leaks` refuses the flag (scrub rewrites plain files only). Without the flag,
+`agents` mentions an archive that exists but is not being read.
+
 What counts as an activity stamp per agent (the rule that decides hours):
 
 - claude: entries with `type` user or assistant. Verbatim from cchours.

@@ -20,6 +20,9 @@ const ok = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fail++
 const T = (s) => new Date(2026, 0, 1, 12, 0, s).getTime(); // 12:00:00 + s seconds, local
 const iso = (s) => new Date(T(s)).toISOString();
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agstats-'));
+// The default cclogsall archive is looked up by `agents`; point it (and every
+// child process) at nothing so a real ~/.cclogsall never enters a test.
+process.env.CCLOGSALL_OUT = path.join(tmp, 'no-cclogsall');
 const mk = (o) => JSON.stringify(o);
 function writeFile(p, lines) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, lines.join('\n') + '\n'); }
 
@@ -958,6 +961,57 @@ console.log('== nothing installed / nothing said: say so ==');
   ok('package.json points at the GitHub repository', /github\.com\/sue738\/agstats/.test(pkg.repository.url) && /sue738\/agstats/.test(pkg.homepage) && /sue738\/agstats\/issues/.test(pkg.bugs.url));
   const help = run(['--help']);
   ok('★ --help names every writer', ['hours --svg', 'quota --set', 'guards add', 'leaks scrub'].every((w) => help.includes(w)));
+}
+
+console.log('== cclogsall archive (--archive) ==');
+{
+  const zlib = require('zlib');
+  const live = path.join(tmp, 'arch', 'live');
+  const arch = path.join(tmp, 'arch', 'cclogsall');
+  const s1 = 'bbbbbbbb-0000-0000-0000-000000000001', s2 = 'bbbbbbbb-0000-0000-0000-000000000002';
+  const turn = (a, b) => [
+    mk({ type: 'user', timestamp: iso(a), cwd: '/p', message: { role: 'user', content: 'go' } }),
+    mk({ type: 'assistant', timestamp: iso(b), message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } }),
+  ];
+  const gz = (rel, lines) => { const f = path.join(arch, 'projects', rel + '.gz'); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, zlib.gzipSync(lines.join('\n') + '\n')); };
+  // s1 is live (0..10s) and also archived as an older, shorter copy (0..4s): live must win
+  writeFile(path.join(live, '-p', `${s1}.jsonl`), turn(0, 10));
+  gz(`-p/${s1}.jsonl`, turn(0, 4));
+  // s2 and its subagent exist only in the archive: Claude Code already deleted them
+  gz(`-p/${s2}.jsonl`, turn(100, 120));
+  gz(`-p/${s2}/subagents/agent-z.jsonl`, turn(105, 111));
+  // a truncated archive file is skipped, not a crash
+  fs.writeFileSync(path.join(arch, 'projects', '-p', 'cccccccc-0000-0000-0000-000000000003.jsonl.gz'), Buffer.from([0x1f, 0x8b, 0x08, 0x00, 1, 2]));
+  fs.writeFileSync(path.join(arch, 'manifest.json'), '{"version":1,"entries":{}}');
+
+  ok('without an archive: only the live session', Claude.read({ dir: live }).sessions.length === 1);
+  const r = Claude.read({ dir: live, archive: arch });
+  const one = r.sessions.find((x) => x.id === s1), two = r.sessions.find((x) => x.id === s2), sub = r.sessions.find((x) => x.id === 'agent-z');
+  ok('with the archive: live + the archived session + its subagent', r.sessions.length === 3 && two && sub);
+  ok('★ live wins: the session in both is read from the live file, not the older copy', one && !one.archived && one.events[one.events.length - 1].t === T(10) && r.archive.duplicates === 1);
+  ok('archived sessions are flagged and keep their .gz as file', two.archived && two.file.endsWith('.jsonl.gz') && sub.archived);
+  ok('★ an archived subagent pairs with its archived parent', sub.parentId === s2);
+  ok('an unreadable .gz is counted and skipped', r.archive.unreadable === 1 && r.archive.sessions === 2);
+  ok('project comes from the archived transcript itself', two.project === '/p');
+
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const dirArgs = ['--dir', `claude=${live}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`];
+  const run = (args, env = {}) => { try { return { code: 0, out: execFileSync('node', [bin, ...args, ...dirArgs], { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, ...env } }) }; } catch (e) { return { code: e.status, out: e.stdout, err: e.stderr }; } };
+  const h0 = JSON.parse(run(['hours', '--json', '--all']).out), h1 = JSON.parse(run(['hours', '--json', '--all', '--archive', arch]).out);
+  // live s1: 10s. archive adds s2 100..120 (20s) + its subagent 105..111 (6s)
+  ok('★ hours --archive adds exactly the archived sessions (10s → 36s)', Math.round(h0.agentHours * 3600) === 10 && Math.round(h1.agentHours * 3600) === 36);
+  const a0 = JSON.parse(run(['agents', '--json'], { CCLOGSALL_OUT: arch }).out).find((x) => x.agent === 'claude');
+  ok('★ agents mentions an archive that exists but is not being read', a0.archive && a0.archive.read === false && a0.archive.files === 4 && a0.sessions === 1);
+  ok('agents text says how to read it', /not being read — --archive/.test(run(['agents'], { CCLOGSALL_OUT: arch }).out));
+  const a1 = JSON.parse(run(['agents', '--json', '--archive'], { CCLOGSALL_OUT: arch }).out).find((x) => x.agent === 'claude');
+  ok('★ bare --archive reads the default archive; agents reports what it added', a1.archive.read === true && a1.archive.sessions === 2 && a1.archive.duplicates === 1 && a1.sessions === 3);
+  ok('no archive anywhere: agents says nothing about one', JSON.parse(run(['agents', '--json']).out).find((x) => x.agent === 'claude').archive === null);
+  ok('`--archive hours` is the default archive plus the command', run(['--archive', 'hours', '--json', '--all'], { CCLOGSALL_OUT: arch }).code === 0);
+  ok('★ --archive at a directory with no archive exits 2 instead of reading nothing', run(['hours', '--archive', path.join(tmp, 'no-such-archive')]).code === 2);
+  ok('--archive with --agent that leaves claude out is refused', run(['hours', '--archive', arch, '--agent', 'codex']).code === 2);
+  ok('leaks --archive is refused (scrub cannot rewrite gzip)', run(['leaks', '--archive', arch]).code === 2);
+  ok('the archive is read, never written', fs.readdirSync(path.join(arch, 'projects', '-p')).length === 4 && fs.readFileSync(path.join(arch, 'manifest.json'), 'utf8') === '{"version":1,"entries":{}}');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

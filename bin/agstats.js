@@ -30,6 +30,7 @@ const Overlap = require('../lib/metrics/overlap.js');
 const Waits = require('../lib/metrics/waits.js');
 const R = require('../lib/render.js');
 const M = require('../lib/model.js');
+const Claude = require('../lib/readers/claude.js');
 
 const JA = /^ja/i.test(process.env[ENV_LANG] || process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || '');
 const L = (en, ja) => (JA ? ja : en);
@@ -62,6 +63,8 @@ Scope:
   --agent a[,b]        only these agents (${Readers.NAMES.join(', ')})
   --dir agent=path     override an agent's transcript root (repeatable)
   --include-automated  count sessions written by programs (a2a servers, cron) — off by default
+  --archive [dir]      also read Claude Code sessions from a cclogsall archive (default ~/.cclogsall);
+                       live sessions win, so only what the cleanup deleted is added — off by default
 
 Period:
   --today | --week | --month | --days N | --all | --since YYYYMMDD | --until YYYYMMDD
@@ -126,6 +129,8 @@ function parseArgs(argv) {
     else if (a === '--no-backup') o.noBackup = true;
     else if (a === '--idle-gap') o.idleGapS = +argv[++i];
     else if (a === '--include-automated') o.includeAutomated = true;
+    // `agstats --archive hours` means the default archive, not a directory named "hours"
+    else if (a === '--archive') { const v = argv[i + 1]; o.archive = (v && !v.startsWith('-') && !COMMANDS.includes(v)) ? argv[++i] : true; }
     else if (a === '--agent') {
       // An unknown name used to narrow to nothing and print zeros, which read
       // as "that agent did nothing".
@@ -159,7 +164,21 @@ function parseArgs(argv) {
     if (o[k] != null && !(Number.isFinite(o[k]) && o[k] > 0)) usageError(L(`${flag}: expected a positive number`, `${flag}: 正の数で指定してください`));
   }
   if (o.since && o.until && parseDate(o.since) > parseDate(o.until)) usageError(L(`--since ${o.since} is after --until ${o.until}`, `--since ${o.since} が --until ${o.until} より後です`));
+  if (o.archive) o.archive = archiveDir(o);
   return o;
+}
+
+/**
+ * The archive --archive names, or a usage error: a missing archive must not
+ * read as "nothing older than the live directory", and a flag the command
+ * cannot honour is refused rather than ignored.
+ */
+function archiveDir(o) {
+  const dir = o.archive === true ? Claude.defaultArchiveDir() : o.archive;
+  if (o.only && !o.only.includes('claude')) usageError(L('--archive reads Claude Code\'s cclogsall archive, and --agent leaves claude out', '--archive は Claude Code の cclogsall アーカイブを読むもの — --agent に claude が入っていません'));
+  if ((o.command || '') === 'leaks') usageError(L('leaks: --archive is not supported — the archive is gzip and scrub rewrites plain files only', 'leaks: --archive は使えません — アーカイブは gzip で、scrub は平文ファイルしか書き換えないため'));
+  if (!Claude.hasArchive(dir)) usageError(L(`--archive: no cclogsall archive at ${dir} (expected ${dir}/projects/)`, `--archive: ${dir} に cclogsall のアーカイブがありません(${dir}/projects/ を想定)`));
+  return dir;
 }
 
 function usageError(msg) { console.error(msg); process.exit(2); }
@@ -237,6 +256,7 @@ function cmdAgents(o, found) {
       last: f.sessions.length ? M.dayKey(last) : null,
       error: f.error || null,
     };
+    if (f.agent === 'claude') rec.archive = archiveInfo(o, f);
     out.push(rec);
     rows.push([
       f.agent,
@@ -256,6 +276,28 @@ function cmdAgents(o, found) {
     console.log(L('  "automated" = written by a program (an a2a server, a cron job), not a person. Left out of every metric unless --include-automated.',
       '  「自動実行」= 人ではなくプログラム(a2a サーバー・cron)が書いたもの。--include-automated を付けない限りどの指標にも入れない。'));
   }
+  const ar = (out.find((r) => r.agent === 'claude') || {}).archive;
+  if (ar && ar.read) {
+    console.log(L(`  claude: ${n(ar.sessions)} session(s) read from the cclogsall archive ${tilde(ar.dir)} — deleted from the live directory; ${n(ar.duplicates)} archived cop${ar.duplicates === 1 ? 'y' : 'ies'} of live sessions skipped (live wins)`,
+      `  claude: cclogsall アーカイブ ${tilde(ar.dir)} から ${n(ar.sessions)} セッションを読み込み(ライブから消えたもの)。ライブにもある ${n(ar.duplicates)} 件はライブ側を使用`));
+    if (ar.unreadable) console.log(L(`  ⚠ ${n(ar.unreadable)} archived file(s) could not be decompressed and were skipped`, `  ⚠ 展開できなかったアーカイブ ${n(ar.unreadable)} 件は読み飛ばしました`));
+  } else if (ar) {
+    console.log(L(`  claude: a cclogsall archive is at ${tilde(ar.dir)} (${n(ar.files)} transcripts) and is not being read — --archive adds the sessions Claude Code already deleted`,
+      `  claude: cclogsall アーカイブが ${tilde(ar.dir)} にあります(${n(ar.files)} 件)が読んでいません — --archive で Claude Code が消したセッションも含めます`));
+  }
+}
+
+function tilde(p) { return String(p).replace(process.env.HOME || '', '~'); }
+
+/**
+ * The Claude row's archive: what was read under --archive, or — when one
+ * exists and is not being read — that it is there. null when there is none.
+ */
+function archiveInfo(o, f) {
+  if (f.archive) return { dir: f.archive.dir, read: true, sessions: f.archive.sessions, duplicates: f.archive.duplicates, unreadable: f.archive.unreadable };
+  const dir = Claude.defaultArchiveDir();
+  if (!Claude.hasArchive(dir)) return null;
+  return { dir, read: false, files: Claude.listArchive(dir).length };
 }
 
 // ---------------------------------------------------------------- hours
@@ -913,7 +955,7 @@ function cmdWaits(o, found) {
 async function main() {
   const o = parseArgs(process.argv);
   if (o.command === 'leaks') return cmdLeaks(o, Readers.rawAll({ only: o.only, dirs: o.dirs }));
-  const found = Readers.readAll({ only: o.only, dirs: o.dirs, includeAutomated: o.includeAutomated });
+  const found = Readers.readAll({ only: o.only, dirs: o.dirs, includeAutomated: o.includeAutomated, archive: o.archive });
   if (o.command === 'agents') return cmdAgents(o, found);
   if (o.command === 'hours') return cmdHours(o, found);
   if (o.command === 'tools') return cmdTools(o, found);

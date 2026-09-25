@@ -770,6 +770,23 @@ console.log('== --json with nothing to report is still JSON ==');
   }
 }
 
+console.log('== --agent / --dir are validated ==');
+{
+  const bin = path.join(__dirname, '..', 'bin', 'agstats.js');
+  const nope = path.join(tmp, 'nope');
+  const res = (args) => { try { execFileSync('node', [bin, ...args], { encoding: 'utf8', stdio: 'pipe' }); return { code: 0, err: '' }; } catch (e) { return { code: e.status, err: e.stderr }; } };
+  const base = ['hours', '--json', '--dir', `claude=${nope}`, '--dir', `codex=${nope}`, '--dir', `gemini=${nope}`, '--dir', `cursor=${nope}`];
+  const typo = res([...base, '--agent', 'claud']);
+  ok('★ --agent with an unknown name exits 2 and lists the valid names', typo.code === 2 && Readers.NAMES.every((x) => typo.err.includes(x)));
+  ok('--agent with an empty value exits 2', res([...base, '--agent', '']).code === 2);
+  ok('★ --dir without "=" exits 2', res([...base, '--dir', 'claude']).code === 2);
+  ok('★ --dir with an unknown agent exits 2', res([...base, '--dir', `nope=${nope}`]).code === 2);
+  ok('--dir with an empty path exits 2', res([...base, '--dir', 'claude=']).code === 2);
+  let threw = false;
+  try { Readers.readAll({ only: ['claud'], dirs: { claude: nope } }); } catch (e) { threw = /unknown agent/.test(e.message); }
+  ok('library: readAll refuses an unknown agent name', threw);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

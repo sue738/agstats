@@ -121,11 +121,19 @@ function parseArgs(argv) {
     else if (a === '--no-backup') o.noBackup = true;
     else if (a === '--idle-gap') o.idleGapS = +argv[++i];
     else if (a === '--include-automated') o.includeAutomated = true;
-    else if (a === '--agent') o.only = String(argv[++i] || '').split(',').filter(Boolean);
+    else if (a === '--agent') {
+      // An unknown name used to narrow to nothing and print zeros, which read
+      // as "that agent did nothing".
+      o.only = String(argv[++i] || '').split(',').map((x) => x.trim()).filter(Boolean);
+      const bad = o.only.filter((x) => !Readers.NAMES.includes(x));
+      if (!o.only.length || bad.length) usageError(L(`--agent: ${bad.length ? `unknown agent "${bad.join(', ')}"` : 'expected a name'} — one of ${Readers.NAMES.join(', ')}`, `--agent: ${bad.length ? `不明なエージェント "${bad.join(', ')}"` : '名前を指定してください'} — ${Readers.NAMES.join(', ')} のいずれか`));
+    }
     else if (a === '--dir') {
       const v = String(argv[++i] || '');
       const k = v.indexOf('=');
-      if (k > 0) o.dirs[v.slice(0, k)] = v.slice(k + 1);
+      const name = k > 0 ? v.slice(0, k) : '';
+      if (!Readers.NAMES.includes(name) || !v.slice(k + 1)) usageError(L(`--dir: expected agent=path with agent one of ${Readers.NAMES.join(', ')}, got "${v}"`, `--dir: agent=path 形式で指定してください(agent は ${Readers.NAMES.join(', ')}): "${v}"`));
+      o.dirs[name] = v.slice(k + 1);
     }
     else if (a === '-h' || a === '--help') { console.log(HELP); process.exit(0); }
     else if (a.startsWith('-')) { console.error(L(`unknown option ${a}`, `不明なオプション ${a}`)); process.exit(2); }
@@ -145,6 +153,8 @@ function parseArgs(argv) {
   if (o.days != null && !(Number.isFinite(o.days) && o.days > 0)) { console.error(L('--days: expected a positive number', '--days: 正の数で指定してください')); process.exit(2); }
   return o;
 }
+
+function usageError(msg) { console.error(msg); process.exit(2); }
 
 function parseDate(s) {
   if (!s) return null;

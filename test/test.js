@@ -1279,6 +1279,33 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
       && JSON.parse(run(['sends', '--json', '--session', 'cccccccc-0000-0000-0000-000000000002'], hargs).out).headless === true);
   }
 
+  // ---- cursor through its database: totals yes, breakdown n/a
+  let sqlite = null;
+  try { sqlite = require('node:sqlite'); } catch (e) { sqlite = null; }
+  if (!sqlite) console.log('  (node:sqlite not available — cursor sends CLI test skipped)');
+  else {
+    const cdir = path.join(tmp, 'sends', 'cursor');
+    fs.mkdirSync(cdir, { recursive: true });
+    const db = new sqlite.DatabaseSync(path.join(cdir, 'state.vscdb'));
+    db.exec('create table cursorDiskKV (key TEXT, value BLOB)');
+    const put = db.prepare('insert into cursorDiskKV (key, value) values (?, ?)');
+    put.run('composerData:th1', JSON.stringify({ createdAt: iso(0), fullConversationHeadersOnly: [{ bubbleId: 'b1' }, { bubbleId: 'b2' }] }));
+    // the transcript shows ~1,000 tokens before a bubble that says 900 went in: the estimate exceeds the total
+    put.run('bubbleId:th1:b1', JSON.stringify({ type: 1, text: 'k'.repeat(4000), createdAt: iso(0) }));
+    put.run('bubbleId:th1:b2', JSON.stringify({ type: 2, text: 'l'.repeat(8), createdAt: iso(1), tokenCount: { inputTokens: 900, outputTokens: 4 } }));
+    db.close();
+    const cargs = ['--agent', 'cursor,claude', '--dir', `cursor=${cdir}`, '--dir', `claude=${base}`];
+    const cj = JSON.parse(run(['sends', '--json', '--session', 'th1'], cargs).out);
+    ok('★ cursor: the measured total is shown, the breakdown is n/a', cj.agent === 'cursor' && cj.last.sent === 900 && cj.breakdown === 'n/a' && /granularity is undocumented/.test(cj.breakdownNote));
+    ok('★ cursor: no visible estimate, invisible share or first-request overhead', cj.visible === null && cj.invisible === null && cj.invisibleShare === null && cj.baseline === null);
+    const ct = run(['sends', '--session', 'th1'], cargs).out;
+    ok('★ cursor text: "breakdown n/a", the real total, and no invisible line', /breakdown n\/a — Cursor's token count granularity is undocumented/.test(ct) && /900 tokens sent/.test(ct) && !/invisible overhead \(est/.test(ct));
+    const cb = JSON.parse(run(['sends', '--by-agent', '--json', '--all'], cargs).out).agents.find((r) => r.agent === 'cursor');
+    ok('★ cursor --by-agent: left out of the invisible-share median (null, not 0%), size kept', cb.recorded === 1 && cb.medianInvisibleShare === null && cb.medianBaseline === null && cb.medianLastSent === 900 && cb.breakdown === 'n/a');
+    ok('cursor --by-agent text: n/a, with the reason in the footer', /n\/a = breakdown n\/a/.test(run(['sends', '--by-agent', '--all'], cargs).out));
+    ok('claude stays "estimated" beside it', JSON.parse(run(['sends', '--json', '--session', sid], cargs).out).breakdown === 'estimated');
+  }
+
   const zlib = require('zlib');
   const sarch = path.join(tmp, 'sends', 'archive');
   fs.mkdirSync(path.join(sarch, 'projects', '-p'), { recursive: true });

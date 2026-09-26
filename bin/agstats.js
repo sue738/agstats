@@ -1021,18 +1021,26 @@ function printSendsSession(a) {
       console.log(L(`Usage: not recorded — ${a.agent} wrote no token figures for this session, so nothing below is a measured total.`,
         `使用量: 記録なし — ${a.agent} はこのセッションのトークン数を書いていません。以下に実測の合計はありません。`));
     }
-    console.log(L(`\n  visible in transcript (est.): ${n(a.visible.total)} tokens`, `\n  転記から見える分(概算): ${n(a.visible.total)} トークン`));
-    printBreakdown(a.visible, 0);
+    if (a.visible) {
+      console.log(L(`\n  visible in transcript (est.): ${n(a.visible.total)} tokens`, `\n  転記から見える分(概算): ${n(a.visible.total)} トークン`));
+      printBreakdown(a.visible, 0);
+    }
     console.log('\n' + HONEST());
     return;
   }
   const last = a.last;
   console.log(L(`Last request: ${n(last.sent)} tokens sent (real, from the provider's usage fields)`, `最終リクエスト: ${n(last.sent)} トークン送信(プロバイダの usage の実測値)`));
   console.log(`  ${cacheLine(a.agent, a.cache)}`);
-  console.log(L(`\n  visible in transcript (est.): ${n(a.visible.total)}  ${pct(a.visible.total / last.sent)}`, `\n  転記から見える分(概算): ${n(a.visible.total)}  ${pct(a.visible.total / last.sent)}`));
-  printBreakdown(a.visible, last.sent);
-  console.log(L(`  invisible overhead (est.): ${n(a.invisible)}  ${pct(a.invisibleShare)}`, `  不可視オーバーヘッド(概算): ${n(a.invisible)}  ${pct(a.invisibleShare)}`));
-  console.log(L('    system prompt + tool definitions + anything not recorded in the transcript', '    system prompt + ツール定義 + 転記に記録されないもの'));
+  if (a.breakdown === 'n/a') {
+    console.log(L(`\n  breakdown n/a — ${a.breakdownNote}, so the total is not set against the transcript:`,
+      `\n  内訳なし — ${a.agent} のトークン数の単位(リクエストごとかターンごとか)が文書化されていないため、転記と突き合わせません:`));
+    console.log(L('  no category split, no invisible share, no overhead before your first message.', '  カテゴリ別の内訳・不可視分の割合・最初の一言の前の送信量は出しません。'));
+  } else {
+    console.log(L(`\n  visible in transcript (est.): ${n(a.visible.total)}  ${pct(a.visible.total / last.sent)}`, `\n  転記から見える分(概算): ${n(a.visible.total)}  ${pct(a.visible.total / last.sent)}`));
+    printBreakdown(a.visible, last.sent);
+    console.log(L(`  invisible overhead (est.): ${n(a.invisible)}  ${pct(a.invisibleShare)}`, `  不可視オーバーヘッド(概算): ${n(a.invisible)}  ${pct(a.invisibleShare)}`));
+    console.log(L('    system prompt + tool definitions + anything not recorded in the transcript', '    system prompt + ツール定義 + 転記に記録されないもの'));
+  }
   if (a.baseline != null && a.firstPrompt) {
     console.log(L(`\nFirst request: ${n(a.baseline)} tokens went out before your first message (your message: ${n(a.firstPrompt.chars)} chars ≈ ${n(a.firstPrompt.est)} tok)`,
       `\n最初のリクエスト: 最初の一言より前に ${n(a.baseline)} トークン送信(あなたの一言: ${n(a.firstPrompt.chars)} 文字 ≈ ${n(a.firstPrompt.est)} tok)`));
@@ -1047,6 +1055,7 @@ function printSendsCompare(rows, label) {
   console.log(R.banner(L(`${NAME} sends — by agent (${label}, interactive sessions started in the period; headless runs on their own rows)`,
     `${NAME} sends — エージェント別 (${label}、期間内に始まった対話セッション。自動実行は別の行)`)));
   const NR = L('not recorded', '記録なし');
+  const NA = 'n/a';
   const tok = (x) => (x == null ? NR : n(Math.round(x)));
   const tbl = rows.map((r) => {
     const name = r.mode === 'headless' ? L(`${r.agent} (headless)`, `${r.agent}(自動実行)`) : r.agent;
@@ -1054,7 +1063,8 @@ function printSendsCompare(rows, label) {
     if (!r.sessions) return [name, '0', '', '', '', '', '', ''];
     const usage = [r.recorded ? L(`${n(r.recorded)} recorded`, `記録あり ${n(r.recorded)}`) : '', r.totalOnly ? L(`${n(r.totalOnly)} total only`, `合計のみ ${n(r.totalOnly)}`) : '', r.notRecorded ? L(`${n(r.notRecorded)} not recorded`, `記録なし ${n(r.notRecorded)}`) : ''].filter(Boolean).join(', ');
     if (!r.recorded) return [name, n(r.sessions), usage, NR, NR, NR, NR, NR];
-    return [name, n(r.sessions), usage, tok(r.medianBaseline), pct(r.medianInvisibleShare), tok(r.medianLastSent),
+    const na = r.breakdown === 'n/a';
+    return [name, n(r.sessions), usage, na ? NA : tok(r.medianBaseline), na ? NA : pct(r.medianInvisibleShare), tok(r.medianLastSent),
       r.cache ? `${pct(r.cache.read)} / ${pct(r.cache.write)} / ${pct(r.cache.uncached)}` : NR,
       r.ttl ? `${pct(r.ttl.write1h)} / ${pct(r.ttl.write5m)}` : NR];
   });
@@ -1066,6 +1076,9 @@ function printSendsCompare(rows, label) {
   不可視分の割合、その大きさ。キャッシュの比率は記録のある全リクエストの入力に対する割合。`));
   console.log(L('  interactive = a person at the prompt; headless = `claude -p`, `codex exec`, CI — usually one request, nearly all overhead.',
     '  対話 = 人がプロンプトにいたもの。自動実行 = `claude -p`・`codex exec`・CI — たいてい1リクエストで、ほぼ全部がオーバーヘッド。'));
+  const na = rows.filter((r) => r.breakdown === 'n/a');
+  if (na.length) console.log(L(`  n/a = breakdown n/a — ${na[0].breakdownNote}; totals shown, no invisible share or overhead (${[...new Set(na.map((r) => r.agent))].join(', ')}).`,
+    `  n/a = 内訳なし — トークン数の単位が文書化されていないため、合計のみ表示し不可視分・オーバーヘッドは出しません(${[...new Set(na.map((r) => r.agent))].join(', ')})。`));
   console.log(HONEST());
 }
 

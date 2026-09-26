@@ -1055,6 +1055,8 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
   ok('estTokens: bytes / 4, rounded', Wire.estTokens('abcd'.repeat(10)) === 10 && Wire.estTokens('') === 0 && Wire.estTokens('あ') === 1);
   const sp = Wire.splitInjected('hi <system-reminder>x</system-reminder> there');
   ok('splitInjected moves runtime tags out of your words', sp.injected === '<system-reminder>x</system-reminder>' && sp.rest === 'hi  there');
+  ok('★ splitInjected: task reports, bash-mode and caveats are runtime text too (ccsendstats\' pattern)', ['<task-notification><task-id>t</task-id>done</task-notification>', '<bash-input>ls</bash-input>', '<bash-stdout>x</bash-stdout><bash-stderr></bash-stderr>', '<local-command-caveat>c</local-command-caveat>']
+    .every((t) => Wire.splitInjected(t).rest === '' && Wire.splitInjected(t).injected === t));
   ok('median of an even list is the mean of the middle two; empty is null', Sends.median([4, 1, 3, 2]) === 2.5 && Sends.median([]) === null);
 
   // ---- claude: numbers computed by hand
@@ -1092,6 +1094,26 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
   ok('claude: the recorded 1h/5m split is kept', a.first.cacheWrite1h === 150 && a.first.cacheWrite5m === 50);
   ok('claude: session totals', a.totals.sent === 3005 && a.totals.cacheRead === 2300 && a.totals.cacheWrite === 600 && a.totals.cacheWrite1h === 150);
 
+  // ---- claude attachment lines (newer Claude Code writes injected context as its own line)
+  {
+    const att = Claude.sendsOf([
+      mk({ type: 'user', timestamp: iso(0), message: { role: 'user', content: 'hi' } }),
+      // 818 B → 204.5 → 205 tok; each rendered item is its own block
+      mk({ type: 'attachment', timestamp: iso(0), attachment: { type: 'skill_listing', content: 'x'.repeat(5000) }, rendered: [{ content: '<system-reminder>' + 's'.repeat(783) + '</system-reminder>' }, { content: 'd'.repeat(400) }] }),
+      // no `rendered`: client-side state (the system prompt's copy) or a version before rendered — not counted
+      mk({ type: 'attachment', timestamp: iso(0), attachment: { type: 'prompt_snapshot', systemPrompt: ['p'.repeat(40000)], tools: [] } }),
+      mk({ type: 'attachment', timestamp: iso(0), attachment: { type: 'skill_listing', content: 'o'.repeat(4000) } }),
+      mk({ type: 'attachment', timestamp: iso(0), isMeta: true, attachment: { type: 'date' }, rendered: [{ content: 'q'.repeat(4000) }] }),
+      mk({ type: 'assistant', timestamp: iso(1), message: { id: 'r1', role: 'assistant', model: 'claude-x', usage: { input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 1000, output_tokens: 1 }, content: [{ type: 'text', text: 'ok' }] } }),
+    ].join('\n'), path.join(base, '-a', 'aaaa.jsonl'), base);
+    const aa = Sends.analyze(att);
+    ok('★ claude: a rendered attachment is injected context, item by item (205 + 100)', aa.visible.injected === 305);
+    ok('★ claude: an attachment without rendered, or outside the main loop, is not counted', aa.visible.total === 305 + 1);
+    ok('★ claude: invisible drops by what the attachments sent (1010 − 306)', aa.invisible === 704 && aa.firstPrompt.chars === 2);
+    ok('claude: attachmentTexts reads string and text-block content', JSON.stringify(Claude.attachmentTexts({ type: 'attachment', rendered: [{ content: 'a' }, { content: [{ type: 'text', text: 'b' }, { type: 'image' }] }, {}] })) === '["a","b\\n"]'
+      && Claude.attachmentTexts({ type: 'attachment', attachment: {} }).length === 0);
+  }
+
   // ---- parity with ccsendstats, when it is on this machine
   let CS = null, CT = null;
   for (const d of [path.join(os.homedir(), 'private', 'ccsendstats', 'lib'), path.join(os.homedir(), 'private', 'playground-tools', 'apps', 'ccsendstats', 'lib')]) {
@@ -1109,12 +1131,27 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
         content: [{ type: 'tool_use', id: 'k', name: 'Read', input: { file_path: '/x/y' } }, { type: 'text', text: 'reading' }] } }),
       mk({ type: 'user', timestamp: iso(3), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'k', content: [{ type: 'text', text: 'line1' }, { type: 'image' }, { type: 'text', text: 'line2 ✓' }] }] } }),
       mk({ type: 'assistant', timestamp: iso(4), message: { id: 'p2', model: 'claude-y', content: [{ type: 'text', text: 'no usage here' }] } }),
+      mk({ type: 'user', timestamp: iso(4), promptSource: 'system', message: { role: 'user', content: '<task-notification><task-id>b1</task-id>' + 'n'.repeat(200) + '</task-notification>' } }),
       mk({ type: 'assistant', timestamp: iso(5), message: { id: 'p3', model: 'claude-y', usage: { input_tokens: 1, cache_read_input_tokens: 2051, cache_creation_input_tokens: 40, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 40 }, output_tokens: 2 }, content: 'plain string reply' } }),
     ]);
-    for (const [label, file] of [['hand fixture', path.join(base, '-p', `${sid}.jsonl`)], ['edge fixture', f2]]) {
+    // a third with attachment lines: rendered ones count, the rest do not
+    // (its own directory: the CLI tests below count the sessions under `base`)
+    const base3 = path.join(tmp, 'sends', 'claude-att');
+    const f3 = path.join(base3, '-r', 'dddddddd-0000-0000-0000-000000000003.jsonl');
+    writeFile(f3, [
+      mk({ type: 'user', timestamp: iso(0), message: { role: 'user', content: 'go' } }),
+      mk({ type: 'attachment', timestamp: iso(0), attachment: { type: 'skill_listing', content: 'x'.repeat(3000) }, rendered: [{ content: '<system-reminder>' + 's'.repeat(783) + '</system-reminder>' }] }),
+      mk({ type: 'attachment', timestamp: iso(0), attachment: { type: 'mcp_instructions_delta' }, rendered: [{ content: 'a'.repeat(6) }, { content: [{ type: 'text', text: 'b'.repeat(10) }] }] }),
+      mk({ type: 'attachment', timestamp: iso(0), attachment: { type: 'prompt_snapshot', systemPrompt: ['p'.repeat(9000)] } }),
+      mk({ type: 'attachment', timestamp: iso(0), isSidechain: true, attachment: { type: 'date' }, rendered: [{ content: 'q'.repeat(900) }] }),
+      mk({ type: 'assistant', timestamp: iso(1), message: { id: 'q1', model: 'claude-z', usage: { input_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 998, output_tokens: 1 }, content: [{ type: 'text', text: 'ok' }] } }),
+      mk({ type: 'attachment', timestamp: iso(2), attachment: { type: 'total_tokens_reminder' }, rendered: [{ content: 't'.repeat(40) }] }),
+      mk({ type: 'assistant', timestamp: iso(3), message: { id: 'q2', model: 'claude-z', usage: { input_tokens: 2, cache_read_input_tokens: 1000, cache_creation_input_tokens: 20, output_tokens: 1 }, content: [{ type: 'text', text: 'ok' }] } }),
+    ]);
+    for (const [label, file, dir] of [['hand fixture', path.join(base, '-p', `${sid}.jsonl`), base], ['edge fixture', f2, base], ['attachment fixture', f3, base3]]) {
       const text = fs.readFileSync(file, 'utf8');
       const cc = CS.analyze(CT.parseLines(text));
-      const me = Sends.analyze(Claude.sendsOf(text, file, base));
+      const me = Sends.analyze(Claude.sendsOf(text, file, dir));
       const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
       ok(`★ parity (${label}): request count, first and last real totals`, cc.requests.length === me.requests && cc.first.realIn === me.first.sent && cc.last.realIn === me.last.sent);
       ok(`★ parity (${label}): every visible category and the total`, ['userText', 'injected', 'toolResults', 'assistantText', 'thinking', 'toolInputs', 'total'].every((k) => cc.visible[k] === me.visible[k]));
@@ -1122,7 +1159,8 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
       ok(`★ parity (${label}): cache read / write / uncached of the latest request`, cc.last.cacheRead === me.last.cacheRead && cc.last.cacheWrite === me.last.cacheWrite && cc.last.uncached === me.last.uncached);
       const ttlCc = cc.requests.map((r) => [r.cacheWrite1h, r.cacheWrite5m]);
       const ttlMe = [me.first, me.last].map((r) => [r.cacheWrite1h, r.cacheWrite5m]);
-      if (label === 'edge fixture') ok('★ parity (edge fixture): 1h/5m split where recorded', same([ttlCc[0], ttlCc[ttlCc.length - 1]], ttlMe));
+      if (label === 'attachment fixture') ok('★ parity (attachment fixture): rendered attachments counted as injected in both', me.visible.injected === 205 + 2 + 3 + 10 && cc.visible.injected === me.visible.injected);
+      else if (label === 'edge fixture') ok('★ parity (edge fixture): 1h/5m split where recorded', same([ttlCc[0], ttlCc[ttlCc.length - 1]], ttlMe));
       else ok('the one deliberate difference: ccsendstats files an unsplit write under 5m, sends leaves it unrecorded', ttlCc[ttlCc.length - 1][1] === 400 && ttlMe[1][1] === null);
     }
   }

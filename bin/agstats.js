@@ -987,8 +987,8 @@ const CAT_LABELS = () => ([
 ]);
 
 const pct = (x) => (x == null ? L('not recorded', '記録なし') : `${(x * 100).toFixed(1)}%`);
-const HONEST = () => L('  totals are real (the provider\'s usage, as the agent wrote it down); the breakdown is estimated from bytes (~4 bytes/token)\n  of what the transcript shows, and invisible overhead is the remainder. Main sessions only; subagents are left out.',
-  '  合計は実測(エージェントが書き残したプロバイダの usage)。内訳は転記に写っている中身のバイト数からの概算(~4 bytes/token)で、\n  不可視オーバーヘッドはその残り。メインセッションのみ(サブエージェントは含めない)。');
+const HONEST = () => L('  totals are real (the provider\'s usage, as the agent wrote it down); the breakdown is estimated from bytes (~4 bytes/token)\n  of what the transcript shows (Claude attachments where they record what they sent), and invisible overhead is the remainder.\n  Main sessions only; subagents are left out.',
+  '  合計は実測(エージェントが書き残したプロバイダの usage)。内訳は転記に写っている中身のバイト数からの概算(~4 bytes/token)で、\n  不可視オーバーヘッドはその残り(Claude の attachment は送った本文を記録しているものだけ数える)。\n  メインセッションのみ(サブエージェントは含めない)。');
 
 /** "cache: 91.2% read · 7.9% write (1h 7.0% · 5m 0.9%) · 0.9% uncached", or why it is missing. */
 function cacheLine(agent, c) {

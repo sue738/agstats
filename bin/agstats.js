@@ -1007,6 +1007,7 @@ function printBreakdown(v, whole) {
 function printSendsSession(a) {
   const reqs = a.usage === 'total-only' ? L(`${n(a.totalOnly)} requests (total only)`, `${n(a.totalOnly)} リクエスト(合計のみ)`) : L(`${n(a.requests)} requests`, `${n(a.requests)} リクエスト`);
   const head = [a.agent, a.session.slice(0, 8), short(a.project || '?'), reqs];
+  if (a.headless) head.push(L('headless', '自動実行'));
   if (a.model) head.push(a.model);
   if (a.archived) head.push(L('archived', 'アーカイブ'));
   console.log(R.banner(`${NAME} sends — ${head.join(' · ')}`));
@@ -1043,15 +1044,17 @@ function printSendsSession(a) {
 }
 
 function printSendsCompare(rows, label) {
-  console.log(R.banner(L(`${NAME} sends — by agent (${label}, sessions started in the period)`, `${NAME} sends — エージェント別 (${label}、期間内に始まったセッション)`)));
+  console.log(R.banner(L(`${NAME} sends — by agent (${label}, interactive sessions started in the period; headless runs on their own rows)`,
+    `${NAME} sends — エージェント別 (${label}、期間内に始まった対話セッション。自動実行は別の行)`)));
   const NR = L('not recorded', '記録なし');
   const tok = (x) => (x == null ? NR : n(Math.round(x)));
   const tbl = rows.map((r) => {
-    if (!r.installed) return [r.agent, L('not installed', '未検出'), '', '', '', '', '', ''];
-    if (!r.sessions) return [r.agent, '0', '', '', '', '', '', ''];
+    const name = r.mode === 'headless' ? L(`${r.agent} (headless)`, `${r.agent}(自動実行)`) : r.agent;
+    if (!r.installed) return [name, L('not installed', '未検出'), '', '', '', '', '', ''];
+    if (!r.sessions) return [name, '0', '', '', '', '', '', ''];
     const usage = [r.recorded ? L(`${n(r.recorded)} recorded`, `記録あり ${n(r.recorded)}`) : '', r.totalOnly ? L(`${n(r.totalOnly)} total only`, `合計のみ ${n(r.totalOnly)}`) : '', r.notRecorded ? L(`${n(r.notRecorded)} not recorded`, `記録なし ${n(r.notRecorded)}`) : ''].filter(Boolean).join(', ');
-    if (!r.recorded) return [r.agent, n(r.sessions), usage, NR, NR, NR, NR, NR];
-    return [r.agent, n(r.sessions), usage, tok(r.medianBaseline), pct(r.medianInvisibleShare), tok(r.medianLastSent),
+    if (!r.recorded) return [name, n(r.sessions), usage, NR, NR, NR, NR, NR];
+    return [name, n(r.sessions), usage, tok(r.medianBaseline), pct(r.medianInvisibleShare), tok(r.medianLastSent),
       r.cache ? `${pct(r.cache.read)} / ${pct(r.cache.write)} / ${pct(r.cache.uncached)}` : NR,
       r.ttl ? `${pct(r.ttl.write1h)} / ${pct(r.ttl.write5m)}` : NR];
   });
@@ -1061,6 +1064,8 @@ function printSendsCompare(rows, label) {
   your message's estimate), invisible share of the latest request, and its size. Cache mix is over every recorded request, as a share of input.`,
   `  使用量を記録したセッションの中央値: 最初の一言の前に送られたトークン(最初のリクエストの実測 − あなたの一言の概算)、最終リクエストの
   不可視分の割合、その大きさ。キャッシュの比率は記録のある全リクエストの入力に対する割合。`));
+  console.log(L('  interactive = a person at the prompt; headless = `claude -p`, `codex exec`, CI — usually one request, nearly all overhead.',
+    '  対話 = 人がプロンプトにいたもの。自動実行 = `claude -p`・`codex exec`・CI — たいてい1リクエストで、ほぼ全部がオーバーヘッド。'));
   console.log(HONEST());
 }
 
@@ -1075,7 +1080,7 @@ function cmdSends(o) {
     for (const f of found) for (const s of f.sessions) if (s.start != null && s.start < first) first = s.start;
     const { from, to, label } = resolveRange(o, first, new Date());
     const rows = Sends.compare(found, from, to);
-    if (o.json) return console.log(JSON.stringify({ from, to, estimate: 'bytes / 4', agents: rows }, null, 2));
+    if (o.json) return console.log(JSON.stringify({ from, to, estimate: 'bytes / 4', modes: 'each agent\'s first row is its interactive sessions (mode "interactive"); headless runs (claude -p, codex exec, CI) follow as mode "headless"', agents: rows }, null, 2));
     return printSendsCompare(rows, label);
   }
   let found, pick = null;

@@ -1255,6 +1255,30 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
   const period = JSON.parse(run(['sends', '--by-agent', '--json', '--since', '20300101']).out);
   ok('★ sends --by-agent honours the period (nothing started after 2030)', period.agents.filter((r) => r.installed).every((r) => r.sessions === 0));
   ok('sends --by-agent defaults to the last 30 days (fixtures are older)', JSON.parse(run(['sends', '--by-agent', '--json']).out).agents.filter((r) => r.installed).every((r) => r.sessions === 0));
+  ok('★ sends --by-agent: rows are interactive unless marked; the header says so', cmp.agents.filter((r) => r.installed).every((r) => r.mode === 'interactive') && /interactive sessions/.test(run(['sends', '--by-agent', '--all']).out));
+
+  // ---- headless runs (claude -p, codex exec) get their own row, not the agent's median
+  {
+    const hb = path.join(tmp, 'sends', 'claude-headless');
+    for (const [k, ep] of [['1', 'cli'], ['2', 'sdk-cli'], ['3', 'sdk-cli'], ['4', 'claude-code-github-action']]) {
+      writeFile(path.join(hb, '-h', `cccccccc-0000-0000-0000-00000000000${k}.jsonl`), [
+        mk({ type: 'user', timestamp: iso(0), entrypoint: ep, message: { role: 'user', content: 'p'.repeat(40) } }),
+        // interactive: 900 of 1000 visible (10% invisible); headless: 10 of 1000 visible (99%)
+        mk({ type: 'assistant', timestamp: iso(1), entrypoint: ep, message: { id: 'h1', role: 'assistant', usage: { input_tokens: 1000, output_tokens: 1 }, content: [{ type: 'text', text: 'y'.repeat(ep === 'cli' ? 3560 : 0) }] } }),
+        mk({ type: 'assistant', timestamp: iso(2), entrypoint: ep, message: { id: 'h2', role: 'assistant', usage: { input_tokens: 1000, output_tokens: 1 }, content: [] } }),
+      ]);
+    }
+    const hargs = ['--agent', 'claude', '--dir', `claude=${hb}`];
+    const hc = JSON.parse(run(['sends', '--by-agent', '--json', '--all'], hargs).out).agents;
+    const inter = hc.find((r) => r.mode === 'interactive'), head = hc.find((r) => r.mode === 'headless');
+    ok('★ sends --by-agent: headless sessions (sdk-cli, github-action) are a row of their own', hc.length === 2 && inter.sessions === 1 && head.sessions === 3 && head.agent === 'claude');
+    ok('★ sends --by-agent: the interactive median is not pulled up by headless runs', Math.abs(inter.medianInvisibleShare - 0.1) < 1e-9 && Math.abs(head.medianInvisibleShare - 0.99) < 1e-9);
+    const ht = run(['sends', '--by-agent', '--all'], hargs).out;
+    ok('sends --by-agent text: a "claude (headless)" row, and the header names the split', /claude \(headless\)/.test(ht) && /headless runs on their own rows/.test(ht));
+    ok('sends: a headless session says so in its header', /headless/.test(run(['sends', '--session', 'cccccccc-0000-0000-0000-000000000002'], hargs).out)
+      && JSON.parse(run(['sends', '--json', '--session', 'cccccccc-0000-0000-0000-000000000002'], hargs).out).headless === true);
+  }
+
   const zlib = require('zlib');
   const sarch = path.join(tmp, 'sends', 'archive');
   fs.mkdirSync(path.join(sarch, 'projects', '-p'), { recursive: true });

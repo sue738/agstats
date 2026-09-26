@@ -1058,6 +1058,15 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
   ok('★ splitInjected: task reports, bash-mode and caveats are runtime text too (ccsendstats\' pattern)', ['<task-notification><task-id>t</task-id>done</task-notification>', '<bash-input>ls</bash-input>', '<bash-stdout>x</bash-stdout><bash-stderr></bash-stderr>', '<local-command-caveat>c</local-command-caveat>']
     .every((t) => Wire.splitInjected(t).rest === '' && Wire.splitInjected(t).injected === t));
   ok('median of an even list is the mean of the middle two; empty is null', Sends.median([4, 1, 3, 2]) === 2.5 && Sends.median([]) === null);
+  {
+    const fake = (share) => ({ usage: 'recorded', breakdown: 'estimated', baseline: 1000, invisibleShare: share, last: { sent: 5000 }, requests: 3,
+      firstPrompt: null, totals: { sent: 5000, cacheRead: null, cacheWrite1h: null } });
+    const few = Sends.row('codex', 'interactive', Array.from({ length: Sends.MIN_SESSIONS - 1 }, () => fake(0)));
+    const enough = Sends.row('codex', 'interactive', Array.from({ length: Sends.MIN_SESSIONS }, () => fake(0.5)));
+    ok('★ by-agent: under MIN_SESSIONS recorded sessions shows no median (five sessions printed a 0.0% invisible share)',
+      few.thin === true && few.medianInvisibleShare === null && few.medianBaseline === null && few.medianLastSent === null && few.recorded === Sends.MIN_SESSIONS - 1);
+    ok('by-agent: at MIN_SESSIONS the medians are shown', enough.thin === false && enough.medianInvisibleShare === 0.5);
+  }
 
   // ---- claude: numbers computed by hand
   const base = path.join(tmp, 'sends', 'claude');
@@ -1245,7 +1254,7 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
   const nr = run(['sends', '--session', 'session-2']).out;
   ok('★ sends text for an agent without usage says "not recorded", and prints no total', /not recorded/.test(nr) && !/Last request/.test(nr));
   ok('sends text: totals real, breakdown estimated', /totals are real/.test(run(['sends', '--session', 'dddddddd-0000-0000-0000-000000000001']).out));
-  const cmp = JSON.parse(run(['sends', '--by-agent', '--json', '--all']).out);
+  const cmp = JSON.parse(run(['sends', '--by-agent', '--json', '--all', '--min-sessions', '1']).out);
   const row = (x) => cmp.agents.find((r) => r.agent === x);
   ok('★ sends --by-agent: per-agent medians from the sessions that recorded usage', row('claude').recorded === 2 && row('claude').sessions === 2 && row('claude').medianBaseline != null
     && row('codex').recorded === 1 && row('codex').totalOnly === 1 && row('codex').medianBaseline === 497);
@@ -1269,7 +1278,7 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
       ]);
     }
     const hargs = ['--agent', 'claude', '--dir', `claude=${hb}`];
-    const hc = JSON.parse(run(['sends', '--by-agent', '--json', '--all'], hargs).out).agents;
+    const hc = JSON.parse(run(['sends', '--by-agent', '--json', '--all', '--min-sessions', '1'], hargs).out).agents;
     const inter = hc.find((r) => r.mode === 'interactive'), head = hc.find((r) => r.mode === 'headless');
     ok('★ sends --by-agent: headless sessions (sdk-cli, github-action) are a row of their own', hc.length === 2 && inter.sessions === 1 && head.sessions === 3 && head.agent === 'claude');
     ok('★ sends --by-agent: the interactive median is not pulled up by headless runs', Math.abs(inter.medianInvisibleShare - 0.1) < 1e-9 && Math.abs(head.medianInvisibleShare - 0.99) < 1e-9);
@@ -1300,9 +1309,9 @@ console.log('== sends: what each request sent (ccsendstats port) ==');
     ok('★ cursor: no visible estimate, invisible share or first-request overhead', cj.visible === null && cj.invisible === null && cj.invisibleShare === null && cj.baseline === null);
     const ct = run(['sends', '--session', 'th1'], cargs).out;
     ok('★ cursor text: "breakdown n/a", the real total, and no invisible line', /breakdown n\/a — Cursor's token count granularity is undocumented/.test(ct) && /900 tokens sent/.test(ct) && !/invisible overhead \(est/.test(ct));
-    const cb = JSON.parse(run(['sends', '--by-agent', '--json', '--all'], cargs).out).agents.find((r) => r.agent === 'cursor');
+    const cb = JSON.parse(run(['sends', '--by-agent', '--json', '--all', '--min-sessions', '1'], cargs).out).agents.find((r) => r.agent === 'cursor');
     ok('★ cursor --by-agent: left out of the invisible-share median (null, not 0%), size kept', cb.recorded === 1 && cb.medianInvisibleShare === null && cb.medianBaseline === null && cb.medianLastSent === 900 && cb.breakdown === 'n/a');
-    ok('cursor --by-agent text: n/a, with the reason in the footer', /n\/a = breakdown n\/a/.test(run(['sends', '--by-agent', '--all'], cargs).out));
+    ok('cursor --by-agent text: n/a, with the reason in the footer', /n\/a = breakdown n\/a/.test(run(['sends', '--by-agent', '--all', '--min-sessions', '1'], cargs).out));
     ok('claude stays "estimated" beside it', JSON.parse(run(['sends', '--json', '--session', sid], cargs).out).breakdown === 'estimated');
   }
 

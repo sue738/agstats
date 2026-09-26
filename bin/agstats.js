@@ -82,6 +82,7 @@ Output:
   --list           (blast) show examples of every escaped action
   --session ID     (diff, sends) the session whose id starts with ID
   --by-agent       (waits) rows per agent; (sends) compare agents: median overhead before your first message, invisible share
+  --min-sessions N (sends --by-agent) medians need N sessions that recorded usage (default 20)
 
 Tuning:
   --idle-gap N     silence (seconds) counted as "stopped" (default ${H.IDLE_GAP_S})
@@ -125,6 +126,7 @@ function parseArgs(argv) {
     else if (a === '--unused') o.unused = true;
     else if (a === '--weekly') o.weekly = true;
     else if (a === '--window') o.window = +argv[++i];
+    else if (a === '--min-sessions') o.minSessions = +argv[++i];
     else if (a === '--by-agent') o.byAgent = true;
     else if (a === '--note') o.note = argv[++i];
     else if (a === '--signature') o.signature = argv[++i];
@@ -165,7 +167,7 @@ function parseArgs(argv) {
       process.exit(2);
     }
   }
-  for (const [k, flag] of [['days', '--days'], ['weeks', '--weeks'], ['window', '--window'], ['idleGapS', '--idle-gap']]) {
+  for (const [k, flag] of [['days', '--days'], ['weeks', '--weeks'], ['window', '--window'], ['idleGapS', '--idle-gap'], ['minSessions', '--min-sessions']]) {
     if (o[k] != null && !(Number.isFinite(o[k]) && o[k] > 0)) usageError(L(`${flag}: expected a positive number`, `${flag}: 正の数で指定してください`));
   }
   if (o.since && o.until && parseDate(o.since) > parseDate(o.until)) usageError(L(`--since ${o.since} is after --until ${o.until}`, `--since ${o.since} が --until ${o.until} より後です`));
@@ -1064,7 +1066,9 @@ function printSendsCompare(rows, label) {
     const usage = [r.recorded ? L(`${n(r.recorded)} recorded`, `記録あり ${n(r.recorded)}`) : '', r.totalOnly ? L(`${n(r.totalOnly)} total only`, `合計のみ ${n(r.totalOnly)}`) : '', r.notRecorded ? L(`${n(r.notRecorded)} not recorded`, `記録なし ${n(r.notRecorded)}`) : ''].filter(Boolean).join(', ');
     if (!r.recorded) return [name, n(r.sessions), usage, NR, NR, NR, NR, NR];
     const na = r.breakdown === 'n/a';
-    return [name, n(r.sessions), usage, na ? NA : tok(r.medianBaseline), na ? NA : pct(r.medianInvisibleShare), tok(r.medianLastSent),
+    const few = L('too few', '少なすぎ');
+    const med = (v, f) => (r.thin ? few : na ? NA : f(v));
+    return [name, n(r.sessions), usage, med(r.medianBaseline, tok), med(r.medianInvisibleShare, pct), r.thin ? few : tok(r.medianLastSent),
       r.cache ? `${pct(r.cache.read)} / ${pct(r.cache.write)} / ${pct(r.cache.uncached)}` : NR,
       r.ttl ? `${pct(r.ttl.write1h)} / ${pct(r.ttl.write5m)}` : NR];
   });
@@ -1076,6 +1080,8 @@ function printSendsCompare(rows, label) {
   不可視分の割合、その大きさ。キャッシュの比率は記録のある全リクエストの入力に対する割合。`));
   console.log(L('  interactive = a person at the prompt; headless = `claude -p`, `codex exec`, CI — usually one request, nearly all overhead.',
     '  対話 = 人がプロンプトにいたもの。自動実行 = `claude -p`・`codex exec`・CI — たいてい1リクエストで、ほぼ全部がオーバーヘッド。'));
+  if (rows.some((r) => r.thin)) console.log(L(`  too few = under ${o.minSessions || Sends.MIN_SESSIONS} sessions recorded usage, so no median is shown (--min-sessions N).`,
+    `  少なすぎ = 使用量を記録したセッションが ${o.minSessions || Sends.MIN_SESSIONS} 件未満のため、中央値を出していません(--min-sessions N)。`));
   const na = rows.filter((r) => r.breakdown === 'n/a');
   if (na.length) console.log(L(`  n/a = breakdown n/a — ${na[0].breakdownNote}; totals shown, no invisible share or overhead (${[...new Set(na.map((r) => r.agent))].join(', ')}).`,
     `  n/a = 内訳なし — トークン数の単位が文書化されていないため、合計のみ表示し不可視分・オーバーヘッドは出しません(${[...new Set(na.map((r) => r.agent))].join(', ')})。`));
@@ -1092,7 +1098,7 @@ function cmdSends(o) {
     let first = Infinity;
     for (const f of found) for (const s of f.sessions) if (s.start != null && s.start < first) first = s.start;
     const { from, to, label } = resolveRange(o, first, new Date());
-    const rows = Sends.compare(found, from, to);
+    const rows = Sends.compare(found, from, to, { minSessions: o.minSessions });
     if (o.json) return console.log(JSON.stringify({ from, to, estimate: 'bytes / 4', modes: 'each agent\'s first row is its interactive sessions (mode "interactive"); headless runs (claude -p, codex exec, CI) follow as mode "headless"', agents: rows }, null, 2));
     return printSendsCompare(rows, label);
   }

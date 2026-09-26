@@ -150,7 +150,7 @@ format records as usage:
 | codex | event_msg token_count `last_token_usage.input_tokens` (cached included); repeats with an unchanged running total dropped | `cached_input_tokens` read; `cache_write_input_tokens` | — |
 | codex (Desktop, 2026-09) | only `total_tokens` (input + output): "total only", never used as the input | — | — |
 | gemini | `tokens.input` on a gemini message (gemini-cli's recorder format; no sample on the author's machine carries it) | `tokens.cached` read | — |
-| cursor | assistant bubble `tokenCount.inputTokens` (Cursor's own count; per request or per turn is undocumented) | — | — |
+| cursor | assistant bubble `tokenCount.inputTokens` (Cursor's own count; per request or per turn is undocumented) — shown as a total only, breakdown n/a | — | — |
 
 A request carried what the transcript shows before it: Claude and Cursor
 write usage on the response itself; Codex writes it after, so the snapshot is
@@ -158,6 +158,25 @@ taken at the request's last input. Codex's `base_instructions` is the system
 prompt, recorded (category `system`); its encrypted reasoning is not
 measurable and falls in the remainder. Subagent transcripts are left out, as
 in ccsendstats.
+
+Claude's `type: "attachment"` lines (skill listings, MCP instructions,
+deferred-tool lists, memory, reminders — Claude Code writes injected context
+there, not in a user message) count as `injected` only through `rendered`,
+the text that went into the request (2.1.263 on). An attachment without it —
+older versions, or client-side state such as `prompt_snapshot` — is not
+counted and stays in the remainder; the same rule as ccsendstats.
+
+Cursor's records carry `breakdownNa`: whether one `tokenCount` is a request
+or a turn is undocumented, and set against the transcript it gave a visible
+estimate above the measured total and a 0% invisible share. So `sends` shows
+Cursor's totals and size but no category split, invisible share or
+first-request overhead, and `--by-agent` leaves it out of those medians
+(`n/a`, never 0%).
+
+`--by-agent` rows are interactive sessions. Headless runs (`claude -p` —
+entrypoint `sdk-cli` —, CI, `codex exec`), as read() marks them, are a row of
+their own: usually one request of pure overhead, they outnumber interactive
+sessions on the author's machine and pulled Claude's invisible median to 98%.
 
 Leaks does not use the model: it streams each reader's `rawSources()` (files
 line by line; Cursor's database as value chunks) because it needs every byte
